@@ -1,0 +1,17 @@
+.vs/
+.idea/
+*.vsidx
+*.suo
+*.user
+*.VC.db
+*.opendb
+
+# Build artifacts
+*.exe
+*.pdb
+*.ilk
+*.obj
+*.lib
+*.dll
+debug/
+release/

@@ -336,6 +336,8 @@ void FileIO::output_toolpath(PolygenMesh* toolPath) {
 	for (GLKPOSITION Pos = toolPath->GetMeshList().GetHeadPosition(); Pos;) {
 		QMeshPatch* each_toolpath = (QMeshPatch*)toolPath->GetMeshList().GetNext(Pos);
 
+		each_toolpath->isInstalled_toolpath = false;
+
 		if (each_toolpath->compatible_layer_Index > max_CompatibleLayer_ind)
 			max_CompatibleLayer_ind = each_toolpath->compatible_layer_Index;
 
@@ -515,6 +517,8 @@ void FileIO::output_toolpath_compatible(PolygenMesh* toolPath) {
 	int min_CompatibleLayer_ind = 1000000; int max_CompatibleLayer_ind = -1000000;
 	for (GLKPOSITION Pos = toolPath->GetMeshList().GetHeadPosition(); Pos;) {
 		QMeshPatch* each_toolpath = (QMeshPatch*)toolPath->GetMeshList().GetNext(Pos);
+
+		each_toolpath->isInstalled_toolpath = false;
 
 		if (each_toolpath->compatible_layer_Index > max_CompatibleLayer_ind)
 			max_CompatibleLayer_ind = each_toolpath->compatible_layer_Index;

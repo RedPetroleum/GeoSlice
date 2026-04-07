@@ -8,6 +8,38 @@
 #include "io.h"
 #include "Graph.h"
 
+#define AX_B "U"
+#define AX_C "V"
+#define AX_E "E"
+#define RetractionLength 2.0
+#define FlowMultiplier 1
+
+GcodeGeneration::GcodeGeneration() {
+	_updateToolTransformStrategy();
+}
+
+GcodeGeneration::~GcodeGeneration() = default;
+
+void GcodeGeneration::SetToolTransformKind(ToolTransformKind kind) {
+	if (m_toolTransformKind == kind) return;
+	m_toolTransformKind = kind;
+	_updateToolTransformStrategy();
+}
+
+void GcodeGeneration::_updateToolTransformStrategy() {
+	m_toolTransform = MakeToolTransformStrategy(m_toolTransformKind);
+}
+
+Eigen::Vector3d GcodeGeneration::_toMachinePosition(const Eigen::Vector3d& printPos, double radB, double radC) const {
+	if (!m_toolTransform) return printPos;
+	return m_toolTransform->ToMachinePosition(printPos, radB, radC, h, r);
+}
+
+Eigen::Vector3d GcodeGeneration::_toPrintPosition(const Eigen::Vector3d& machinePos, double radB, double radC) const {
+	if (!m_toolTransform) return machinePos;
+	return m_toolTransform->ToPrintPosition(machinePos, radB, radC, h, r);
+}
+
 void GcodeGeneration::initial(
 	PolygenMesh* Slices, PolygenMesh* Waypoints, PolygenMesh* CncPart,
 	bool Yup2Zup, std::string Dir, 
@@ -341,8 +373,8 @@ void GcodeGeneration::_cal_Dist() {
 
 void GcodeGeneration::_initialSmooth(int loopTime) {
 
-    for (GLKPOSITION Pos = m_Waypoints->GetMeshList().GetHeadPosition(); Pos;) {
-        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(Pos);
+    for (GLKPOSITION patchPos = m_Waypoints->GetMeshList().GetHeadPosition(); patchPos;) {
+        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(patchPos);
 
         if (WayPointPatch->GetIndexNo() < m_FromIndex || WayPointPatch->GetIndexNo() > m_ToIndex) continue;
 
@@ -350,8 +382,8 @@ void GcodeGeneration::_initialSmooth(int loopTime) {
         std::vector<bool> fix_Flag(patch_NodeNum);
         std::vector<Eigen::Vector3d> NodeNormal_temp(patch_NodeNum); // [Nx Ny Nz fix_flag]
 
-        for (GLKPOSITION Pos = WayPointPatch->GetNodeList().GetHeadPosition(); Pos;) {
-            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(Pos);
+        for (GLKPOSITION nodePos = WayPointPatch->GetNodeList().GetHeadPosition(); nodePos;) {
+            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(nodePos);
 
             /*fixed at first / end / jump_start / jump_end points*/
             if (Node->GetIndexNo() == 0 || Node->GetIndexNo() == patch_NodeNum - 1
@@ -632,8 +664,8 @@ void GcodeGeneration::_output_DHW() {
 
     std::cout << "------------------------------------------- Waypoint DHW Data Writing ..." << std::endl;
 
-    for (GLKPOSITION Pos = m_Waypoints->GetMeshList().GetHeadPosition(); Pos;) {
-        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(Pos);
+    for (GLKPOSITION patchPos = m_Waypoints->GetMeshList().GetHeadPosition(); patchPos;) {
+        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(patchPos);
 
         if (WayPointPatch->GetIndexNo() < m_FromIndex || WayPointPatch->GetIndexNo() > m_ToIndex) continue;
 
@@ -649,11 +681,14 @@ void GcodeGeneration::_output_DHW() {
         // cout << targetFilename << endl;
 
         FILE* fp = fopen(targetFilename, "w");
-        if (!fp)	return;
+        if (!fp) {
+            std::cout << "Error: Cannot save file. Does this folder exist '" << testFile_Dir << "'?" << std::endl;
+            continue;
+        }
 
         // danger check: The point is JumpEnd and also JumpStart.
-        for (GLKPOSITION Pos = WayPointPatch->GetNodeList().GetHeadPosition(); Pos;) {
-            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(Pos);
+        for (GLKPOSITION nodePos = WayPointPatch->GetNodeList().GetHeadPosition(); nodePos;) {
+            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(nodePos);
 
             if (Node->Jump_preSecEnd == true && Node->Jump_nextSecStart == true) {
                 std::cout << "The point is JumpEnd and also JumpStart, please check" << std::endl; // important issues!
@@ -745,7 +780,7 @@ void GcodeGeneration::singularityOpt() {
 
                     // solve 1
                     prevBC(0) = ROTATE_TO_DEGREE(-_safe_acos(Node->m_printNor(2)));
-                    prevBC(1) = ROTATE_TO_DEGREE(atan2(Node->m_printNor(0), Node->m_printNor(1)));
+                    prevBC(1) = ROTATE_TO_DEGREE(m_toolTransform->CalculateCAngle(Node->m_printNor(0), Node->m_printNor(1)));
 
                     // solve 2
                     double C2temp = prevBC(1) + 180.0;
@@ -847,13 +882,11 @@ void GcodeGeneration::singularityOpt() {
                                 double iNode_B_rad = DEGREE_TO_ROTATE(iNode_B);
                                 double iNode_C_rad = DEGREE_TO_ROTATE(iNode_C);
 
-                                double iNode_X = iNode_coord3D[0] * cos(iNode_C_rad) - iNode_coord3D[1] * sin(iNode_C_rad);
-                                double iNode_Y = iNode_coord3D[0] * sin(iNode_C_rad) + iNode_coord3D[1] * cos(iNode_C_rad) - h * sin(iNode_B_rad);
-                                double iNode_Z = iNode_coord3D[2] - h * (1- cos(iNode_B_rad));
+                                Eigen::Vector3d machinePos = _toMachinePosition(iNode_coord3D, iNode_B_rad, iNode_C_rad);
 
                                 Node->insertNodesInfo[i] = Eigen::MatrixXd::Zero(1, 6);
 
-                                Node->insertNodesInfo[i] << iNode_X, iNode_Y, iNode_Z, iNode_B, iNode_C, iNode_E;
+                                Node->insertNodesInfo[i] << machinePos.x(), machinePos.y(), machinePos.z(), iNode_B, iNode_C, iNode_E;
                             }
 
                         }
@@ -870,158 +903,7 @@ void GcodeGeneration::singularityOpt() {
     this->_verifyPosNor();
 }
 
-void GcodeGeneration::singularityOpt_newConfig() {
 
-    std::cout << "------------------------------------------- XYZBCE Calculation running ... " << std::endl;
-    long time = clock();
-
-#pragma omp parallel
-    {
-#pragma omp for  
-        for (int omptime = 0; omptime < Core; omptime++) {
-
-            for (GLKPOSITION Pos = m_Waypoints->GetMeshList().GetHeadPosition(); Pos;) {
-                QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(Pos);
-
-                if (WayPointPatch->GetIndexNo() < m_FromIndex || WayPointPatch->GetIndexNo() > m_ToIndex) continue;
-                if (WayPointPatch->GetIndexNo() % Core != omptime) continue;
-
-                std::vector<QMeshPatch*> layerJumpPatchSet = _getJumpSection_patchSet(WayPointPatch);
-
-                Eigen::RowVector2d prevBC = { 0.0,0.0 };
-                // give the message of BC for the first Node (only one)
-                for (GLKPOSITION Pos = WayPointPatch->GetNodeList().GetHeadPosition(); Pos;) {
-                    QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(Pos);
-
-                    // solve 1
-                    prevBC(0) = ROTATE_TO_DEGREE(-_safe_acos(Node->m_printNor(2)));
-                    prevBC(1) = ROTATE_TO_DEGREE(-atan2(Node->m_printNor(0), Node->m_printNor(1)));
-
-                    // solve 2
-                    double C2temp = prevBC(1) + 180.0;
-                    if (C2temp > 180.0)	C2temp -= 360.0; // control the range of C2 into the (-180,180]
-
-                    // prevBC always min
-                    if (fabs(C2temp) < fabs(prevBC(1))) {
-                        prevBC(0) = -prevBC(0);
-                        prevBC(1) = C2temp;
-                    }
-
-                    break;
-                }
-                //cout << "prevBC: " << prevBC << endl;
-
-                for (int Index = 0; Index < layerJumpPatchSet.size(); Index++) {
-                    //1.0 find the singularity waypoints
-                    _markSingularNode(layerJumpPatchSet[Index]);
-                    //1.1 filter single singular waypoint (XXOXX -> XXXXX)
-                    _filterSingleSingularNode(layerJumpPatchSet[Index]);
-
-                    Eigen::MatrixXd sectionTable, B1C1table, B2C2table;
-                    //2.0 get the range of singularity Sections
-                    _getSingularSec(layerJumpPatchSet[Index], sectionTable);
-                    //2.1 project normal to the singular region boundary and check
-                    _projectAnchorPoint(layerJumpPatchSet[Index]);
-
-                    //3. calculate the 2 solves baced on kinematics of CNC
-                    _getBCtable2_newConfig(layerJumpPatchSet[Index], B1C1table, B2C2table);
-                    //4. Main singularity optimization algorithm
-                    _motionPlanning3(layerJumpPatchSet[Index], sectionTable, B1C1table, B2C2table, prevBC);
-                    //5. reset steps: CNC XYZ calculation and E(=DHW) calculation
-                    _getXYZ_newConfig(layerJumpPatchSet[Index]);
-                    _calDHW2E(layerJumpPatchSet[Index], true);
-                }
-
-                //aim to eliminate the -pi to pi sharp change
-                _optimizationC(WayPointPatch);
-                _limit_C_range(WayPointPatch);
-
-                // from delta_E of each point to E in Gcode
-                double E = 0.0;
-                for (GLKPOSITION Pos = WayPointPatch->GetNodeList().GetHeadPosition(); Pos;) {
-                    QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(Pos);
-                    E = E + Node->m_XYZBCE(5);
-                    Node->m_XYZBCE(5) = E;
-                }
-
-                // get insert waypoints (I don't use it now)
-                if(false){
-                    for (int Index = 0; Index < layerJumpPatchSet.size(); Index++) {
-
-                        bool is_print = true;
-                        if (layerJumpPatchSet[Index]->GetNodeNumber() < toolpath_filter_threshold) {
-                            is_print = false; continue;
-                        }
-                        // get insert num for all of points
-                        for (GLKPOSITION Pos = layerJumpPatchSet[Index]->GetNodeList().GetHeadPosition(); Pos;) {
-                            QMeshNode* Node = (QMeshNode*)layerJumpPatchSet[Index]->GetNodeList().GetNext(Pos);
-
-                            // ignore the last point(without next)
-                            if (Node->Jump_SecIndex == (layerJumpPatchSet[Index]->GetNodeNumber() - 1)) continue;
-
-                            GLKPOSITION nextPos = layerJumpPatchSet[Index]->GetNodeList().Find(Node)->next;
-                            QMeshNode* nextNode = (QMeshNode*)layerJumpPatchSet[Index]->GetNodeList().GetAt(nextPos);
-
-                            // the diff C of two neighbor node is too large
-                            double delataC_deg = fabs(Node->m_XYZBCE(4) - nextNode->m_XYZBCE(4));
-
-                            if (delataC_deg > maxDeltaC) {
-
-                                //std::cout << "\n\n\n I am here \n\n\n" << std::endl;
-
-                                Node->insertNodesNum = int(delataC_deg / maxDeltaC) + 1;
-
-                                std::cout << "Node->insertNodesNum" << Node->insertNodesNum << std::endl;
-
-                                Node->insertNodesInfo.resize(Node->insertNodesNum);
-                                for (int i = 0; i < Node->insertNodesInfo.size(); i++) {
-
-                                    int alpha = i + 1;
-
-                                    Eigen::Vector3d node_printPos = Node->m_printPos;
-                                    //Node->GetCoord3D_last(node_printPos[0], node_printPos[1], node_printPos[2]);
-                                    Eigen::Vector3d next_node_printPos = nextNode->m_printPos;
-                                    //nextNode->GetCoord3D_last(next_node_printPos[0], next_node_printPos[1], next_node_printPos[2]);
-
-                                    Eigen::Vector3d iNode_coord3D = Eigen::Vector3d::Zero();
-                                    iNode_coord3D = (1.0 - alpha / double(Node->insertNodesNum + 1)) * node_printPos +
-                                        (alpha / double(Node->insertNodesNum + 1)) * next_node_printPos;
-
-                                    double iNode_B = (1.0 - alpha / double(Node->insertNodesNum + 1)) * Node->m_XYZBCE(3) +
-                                        (alpha / double(Node->insertNodesNum + 1)) * nextNode->m_XYZBCE(3);
-
-                                    double iNode_C = (1.0 - alpha / double(Node->insertNodesNum + 1)) * Node->m_XYZBCE(4) +
-                                        (alpha / double(Node->insertNodesNum + 1)) * nextNode->m_XYZBCE(4);
-
-                                    double iNode_E = (1.0 - alpha / double(Node->insertNodesNum + 1)) * Node->m_XYZBCE(5) +
-                                        (alpha / double(Node->insertNodesNum + 1)) * nextNode->m_XYZBCE(5);
-
-                                    double iNode_B_rad = DEGREE_TO_ROTATE(iNode_B);
-                                    double iNode_C_rad = DEGREE_TO_ROTATE(iNode_C);
-
-                                    double iNode_X = iNode_coord3D[0] - r * cos(iNode_C_rad) + h * sin(iNode_C_rad) * sin(iNode_B_rad) + r;
-                                    double iNode_Y = iNode_coord3D[1] - r * sin(iNode_C_rad) - h * cos(iNode_C_rad) * sin(iNode_B_rad);
-                                    double iNode_Z = iNode_coord3D[2] + h * cos(iNode_B_rad) - h;
-
-                                    Node->insertNodesInfo[i] = Eigen::MatrixXd::Zero(1, 6);
-
-                                    Node->insertNodesInfo[i] << iNode_X, iNode_Y, iNode_Z, iNode_B, iNode_C, iNode_E;
-                                }
-
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    std::cout << "-------------------------------------------" << std::endl;
-    std::printf("TIMER -- XYZBCE Calculation takes %ld ms.\n", clock() - time);
-    std::cout << "------------------------------------------- XYZBCE Calculation Finish!\n " << std::endl;
-
-    this->_verifyPosNor_newConfig();
-}
 
 std::vector<QMeshPatch*> GcodeGeneration::_getJumpSection_patchSet(QMeshPatch* patch) {
 
@@ -1252,7 +1134,7 @@ void GcodeGeneration::_getBCtable2(QMeshPatch* patch, Eigen::MatrixXd& B1C1table
         // B1 deg // -acos(Nz)
         B1C1table(i, 0) = ROTATE_TO_DEGREE(-_safe_acos(Node->m_printNor(2)));
         // C1 deg //atan2(Nx, Ny)
-        B1C1table(i, 1) = ROTATE_TO_DEGREE(atan2(Node->m_printNor(0), Node->m_printNor(1)));
+        B1C1table(i, 1) = ROTATE_TO_DEGREE(m_toolTransform->CalculateCAngle(Node->m_printNor(0), Node->m_printNor(1)));
 
         // solve 2
         // B2 deg // acos(Nz)
@@ -1266,33 +1148,6 @@ void GcodeGeneration::_getBCtable2(QMeshPatch* patch, Eigen::MatrixXd& B1C1table
         // modified by tianyu 10/04/2022
         //B1C1table(i, 0) = B2C2table(i, 0);
         //B1C1table(i, 1) = B2C2table(i, 1);
-    }
-}
-
-void GcodeGeneration::_getBCtable2_newConfig(QMeshPatch* patch, Eigen::MatrixXd& B1C1table, Eigen::MatrixXd& B2C2table) {
-
-    int lines = patch->GetNodeNumber();
-
-    B1C1table = Eigen::MatrixXd::Zero(lines, 2);	B2C2table = Eigen::MatrixXd::Zero(lines, 2);
-
-    for (GLKPOSITION Pos = patch->GetNodeList().GetHeadPosition(); Pos;) {
-        QMeshNode* Node = (QMeshNode*)patch->GetNodeList().GetNext(Pos);
-
-        int i = Node->Jump_SecIndex;
-
-        // solve 1
-        // B1 deg // -acos(Nz)
-        B1C1table(i, 0) = ROTATE_TO_DEGREE(-_safe_acos(Node->m_printNor(2)));
-        // C1 deg //atan2(Nx, Ny)
-        B1C1table(i, 1) = ROTATE_TO_DEGREE(-atan2(Node->m_printNor(0), Node->m_printNor(1)));
-
-        // solve 2
-        // B2 deg // acos(Nz)
-        B2C2table(i, 0) = -B1C1table(i, 0);
-        // C2 deg //atan2(Ny, Nx) +/- 180
-        double C2temp = B1C1table(i, 1) + 180.0;
-        if (C2temp > 180.0)C2temp -= 360.0; // control the range of C2 into the (-180,180]
-        B2C2table(i, 1) = C2temp;
     }
 }
 
@@ -1560,31 +1415,10 @@ void GcodeGeneration::_getXYZ(QMeshPatch* patch) {
             Node->m_XYZBCE(3) = 0.0; Node->m_XYZBCE(4) = 0.0;
         }
 
-        //cal XYZ
-        Node->m_XYZBCE(0) = px * cos(rad_C) - py * sin(rad_C);
-        Node->m_XYZBCE(1) = px * sin(rad_C) + py * cos(rad_C) - h * sin(rad_B);
-        Node->m_XYZBCE(2) = pz - h * (1 - cos(rad_B));
-
-        //if (Node->m_XYZBCE(2) < 0.0) { Node->negativeZ = true; }
-    }
-}
-
-void GcodeGeneration::_getXYZ_newConfig(QMeshPatch* patch) {
-
-    for (GLKPOSITION Pos = patch->GetNodeList().GetHeadPosition(); Pos;) {
-        QMeshNode* Node = (QMeshNode*)patch->GetNodeList().GetNext(Pos);
-
-        double px = Node->m_printPos(0);
-        double py = Node->m_printPos(1);
-        double pz = Node->m_printPos(2);
-
-        double rad_B = DEGREE_TO_ROTATE(Node->m_XYZBCE(3));// rad
-        double rad_C = DEGREE_TO_ROTATE(Node->m_XYZBCE(4));// rad
-
-        //cal XYZ
-        Node->m_XYZBCE(0) = px - r * cos(rad_C) + h * sin(rad_C) * sin(rad_B) + r;
-        Node->m_XYZBCE(1) = py - r * sin(rad_C) - h * cos(rad_C) * sin(rad_B);
-        Node->m_XYZBCE(2) = pz + h * cos(rad_B) - h;
+        Eigen::Vector3d machinePos = _toMachinePosition(Node->m_printPos, rad_B, rad_C);
+        Node->m_XYZBCE(0) = machinePos.x();
+        Node->m_XYZBCE(1) = machinePos.y();
+        Node->m_XYZBCE(2) = machinePos.z();
 
         //if (Node->m_XYZBCE(2) < 0.0) { Node->negativeZ = true; }
     }
@@ -1595,7 +1429,7 @@ void GcodeGeneration::_calDHW2E(QMeshPatch* patch, bool hysteresis_switch) {
     // E = E + ratio * height * length * width;
     // Dicided by CNC W.R.T (E:Volume:E = 0.45)
 
-    double ratio = 0.58;// 0.58 for normal 0.75
+    double ratio = 0.58 * FlowMultiplier;// 0.58 for normal 0.75
     double D, H, W;
 
     // optimize the Hysteresis of extruder
@@ -1702,12 +1536,16 @@ void GcodeGeneration::_verifyPosNor() {
             double rad_B = DEGREE_TO_ROTATE(Node->m_XYZBCE(3));
             double rad_C = DEGREE_TO_ROTATE(Node->m_XYZBCE(4));
 
-            double finalNx = -sin(rad_B) * sin(rad_C);
-            double finalNy = -sin(rad_B) * cos(rad_C);
-            double finalNz = cos(rad_B);
-            double finalPx = X * cos(rad_C) + sin(rad_C) * (h * sin(rad_B) + Y);
-            double finalPy = -X * sin(rad_C) + cos(rad_C) * (h * sin(rad_B) + Y);
-            double finalPz = Z + h - h * cos(rad_B);
+            Eigen::Vector3d targetNormal = m_toolTransform->ToPrintNormal(rad_B, rad_C);
+            double finalNx = targetNormal.x();
+            double finalNy = targetNormal.y();
+            double finalNz = targetNormal.z();
+            Eigen::Vector3d machinePos(X, Y, Z);
+            Eigen::Vector3d finalPos = _toPrintPosition(machinePos, rad_B, rad_C);
+
+            double finalPx = finalPos.x();
+            double finalPy = finalPos.y();
+            double finalPz = finalPos.z();
 
             bool equalPx = (fabs(finalPx - Node->m_printPos(0)) < 0.001) ? true : false;
             bool equalPy = (fabs(finalPy - Node->m_printPos(1)) < 0.001) ? true : false;
@@ -1745,63 +1583,7 @@ void GcodeGeneration::_verifyPosNor() {
 
 }
 
-void GcodeGeneration::_verifyPosNor_newConfig() {
 
-    std::cout << "------------------------------------------- PosNor verification running ... " << std::endl;
-    for (GLKPOSITION Pos = m_Waypoints->GetMeshList().GetHeadPosition(); Pos;) {
-        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(Pos);
-
-        if (WayPointPatch->GetIndexNo() < m_FromIndex || WayPointPatch->GetIndexNo() > m_ToIndex) continue;
-
-        for (GLKPOSITION Pos = WayPointPatch->GetNodeList().GetHeadPosition(); Pos;) {
-            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(Pos);
-
-            double X = Node->m_XYZBCE(0);	double Y = Node->m_XYZBCE(1);	double Z = Node->m_XYZBCE(2);
-            double rad_B = DEGREE_TO_ROTATE(Node->m_XYZBCE(3));
-            double rad_C = DEGREE_TO_ROTATE(Node->m_XYZBCE(4));
-
-            double finalNx = sin(rad_B) * sin(rad_C);
-            double finalNy = -sin(rad_B) * cos(rad_C);
-            double finalNz = cos(rad_B);
-            double finalPx = X + r * cos(rad_C) - h * sin(rad_C) * sin(rad_B) - r;
-            double finalPy = Y + r * sin(rad_C) + h * cos(rad_C) * sin(rad_B);
-            double finalPz = Z - h * cos(rad_B) + h;
-
-            bool equalPx = (fabs(finalPx - Node->m_printPos(0)) < 0.001) ? true : false;
-            bool equalPy = (fabs(finalPy - Node->m_printPos(1)) < 0.001) ? true : false;
-            bool equalPz = (fabs(finalPz - Node->m_printPos(2)) < 0.001) ? true : false;
-
-            if ((equalPx == false) || (equalPy == false) || (equalPz == false)) {
-                std::cout << "++++++++++++++++++++++++++++++++" << std::endl;
-                std::cout << "Layer " << WayPointPatch->GetIndexNo() << " Point Index " << Node->GetIndexNo() << std::endl;
-                std::cout << "final Position" << std::endl;
-                std::cout << finalPx << "\n" << finalPy << "\n" << finalPz << std::endl;
-                std::cout << "print Position\n" << Node->m_printPos << std::endl;
-            }
-
-            Eigen::Vector3d finalNormal = { finalNx, finalNy, finalNz };
-            double angle = _getAngle3D(finalNormal, Node->m_printNor, true);
-            //if (angle >= 0.0001) {
-            if (angle > (m_lambdaValue * 2 + 1.0)) {
-                //if (Node->isSingularNode) cout << "this is a singular node";
-                std::cout << "--------------------------------" << std::endl;
-                std::cout << "Layer " << WayPointPatch->GetIndexNo() << " Point Index " << Node->GetIndexNo() << std::endl;
-                std::cout << "The angle is " << angle << std::endl;
-                std::cout << "final Normal\n" << finalNormal.transpose() << std::endl;
-                std::cout << "print Normal\n" << Node->m_printNor.transpose() << std::endl;
-            }
-
-            //update the normal after singular optimization
-            Node->SetNormal(finalNormal(0), finalNormal(1), finalNormal(2));// for show the final normal on the GUI
-            Node->SetNormal_last(finalNormal(0), finalNormal(1), finalNormal(2));
-            Node->m_printNor = finalNormal;
-        }
-
-    }
-
-    std::cout << "------------------------------------------- PosNor verification Finish!\n" << std::endl;
-
-}
 
 double GcodeGeneration::_getAngle3D(const Eigen::Vector3d& v1, const Eigen::Vector3d& v2, const bool in_degree) {
     //compute the actural angle
@@ -1821,8 +1603,8 @@ void GcodeGeneration::testXYZBCE(bool testXYZBC_E_switch) {
     std::string testData_Dir = "../DataSet/fabricationTest/test_XYZBCE/";
     this->_remove_allFile_in_Dir(testData_Dir);
 
-    for (GLKPOSITION Pos = m_Waypoints->GetMeshList().GetHeadPosition(); Pos;) {
-        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(Pos);
+    for (GLKPOSITION patchPos = m_Waypoints->GetMeshList().GetHeadPosition(); patchPos;) {
+        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(patchPos);
 
         if (WayPointPatch->GetIndexNo() < m_FromIndex || WayPointPatch->GetIndexNo() > m_ToIndex) continue;
 
@@ -1838,10 +1620,13 @@ void GcodeGeneration::testXYZBCE(bool testXYZBC_E_switch) {
         // cout << targetFilename << endl;
 
         FILE* fp = fopen(targetFilename, "w");
-        if (!fp)	return;
+        if (!fp) {
+            std::cout << "FEHLER: Kann Datei nicht speichern - existiert der Ordner '" << testData_Dir << "'?" << std::endl;
+            continue;
+        }
 
-        for (GLKPOSITION Pos = WayPointPatch->GetNodeList().GetHeadPosition(); Pos;) {
-            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(Pos);
+        for (GLKPOSITION nodePos = WayPointPatch->GetNodeList().GetHeadPosition(); nodePos;) {
+            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(nodePos);
 
             Eigen::MatrixXd XYZBCE = Node->m_XYZBCE;
 
@@ -2244,35 +2029,7 @@ void GcodeGeneration::graph_Search_Shortest_Path() {
     std::cout << "------------------------------------------- Graph Search Finish!\n " << std::endl;
 }
 
-void GcodeGeneration::graph_Search_Shortest_Path_newConfig() {
 
-    std::cout << "------------------------------------------- Graph Search running ... " << std::endl;
-    long time = clock();
-
-    for (GLKPOSITION Pos = m_Waypoints->GetMeshList().GetHeadPosition(); Pos;) {
-        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(Pos);
-
-        if (WayPointPatch->GetIndexNo() < m_FromIndex || WayPointPatch->GetIndexNo() > m_ToIndex) continue;
-
-        std::vector<QMeshPatch*> layerJumpPatchSet = _getJumpSection_patchSet(WayPointPatch);
-
-        //each Jump Section
-        for (int Index = 0; Index < layerJumpPatchSet.size(); Index++) {
-            //1. generate a vector to store each graph_Node in the form of collision_Node(a temp struct)
-            std::vector<collision_Node> graph_Node;
-            _get_GraphNode_List_newConfig(layerJumpPatchSet[Index], graph_Node);
-            _build_Graph_newConfig(layerJumpPatchSet[Index], graph_Node);
-            _getXYZ_newConfig(layerJumpPatchSet[Index]);
-        }
-        //aim to eliminate the -pi to pi sharp change
-        _optimizationC(WayPointPatch);
-        _limit_C_range(WayPointPatch);
-    }
-
-    std::cout << "-------------------------------------------" << std::endl;
-    std::printf("TIMER -- Graph Search takes %ld ms.\n", clock() - time);
-    std::cout << "------------------------------------------- Graph Search Finish!\n " << std::endl;
-}
 
 void GcodeGeneration::_get_GraphNode_List(QMeshPatch* patch, std::vector<collision_Node>& graph_Node) {
 
@@ -2392,123 +2149,7 @@ void GcodeGeneration::_get_GraphNode_List(QMeshPatch* patch, std::vector<collisi
     }
 }
 
-void GcodeGeneration::_get_GraphNode_List_newConfig(QMeshPatch* patch, std::vector<collision_Node>& graph_Node) {
 
-    // get the patch polygenMesh_PrintHead
-    QMeshPatch* eHeadPatch = NULL;
-    for (GLKPOSITION posMesh = m_CncPart->GetMeshList().GetHeadPosition(); posMesh != nullptr;) {
-        QMeshPatch* thisPatch = (QMeshPatch*)m_CncPart->GetMeshList().GetNext(posMesh);
-
-        if (thisPatch->patchName == "nozzle_4C") {
-            eHeadPatch = thisPatch;
-            break;
-        }
-    }
-    if (eHeadPatch == NULL) { std::cout << "PrintHead is NULL, please check." << std::endl; return; }
-
-
-    for (GLKPOSITION Pos = patch->GetNodeList().GetHeadPosition(); Pos;) {
-        QMeshNode* Node = (QMeshNode*)patch->GetNodeList().GetNext(Pos);
-
-        if (Node->isCollision) {
-
-            double candidate_normal_NUM = 0;
-            for (int ZrotateAngle = 0; ZrotateAngle < 360; ZrotateAngle = ZrotateAngle + delta_Z) {
-                for (int XtiltAngle = 90; XtiltAngle > 0; XtiltAngle = XtiltAngle - delta_X) {
-
-                    double rad_ZrotateAngle = DEGREE_TO_ROTATE(ZrotateAngle);
-                    double rad_XtiltAngle = DEGREE_TO_ROTATE(XtiltAngle);
-
-                    Eigen::Vector3d candidateNor = _calCandidateNormal(Node->m_printNor, rad_ZrotateAngle, rad_XtiltAngle);
-                    //cout << "candidateNor:\n " << candidateNor << endl;
-
-                    bool iscollision_candidate_cNode = false;
-                    _locate_EHead_printPos(eHeadPatch, Node->m_printPos, candidateNor);
-                    // Test all of the previous-layers' node +-+-+ all of the previous-node before the deteted node at the same layer
-                    std::vector<QMeshPatch*> check_below_WpSet;
-                    int layerLoop = 0;
-                    // collect the Waypoint patch before the printed node now
-                    for (GLKPOSITION prevPos = m_Waypoints->GetMeshList().Find(patch->rootPatch_jumpPatch); prevPos;) {
-                        QMeshPatch* prevWpPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetPrev(prevPos);
-
-                        if (layerLoop >= layerDepth) break;
-
-                        check_below_WpSet.push_back(prevWpPatch);
-
-                        layerLoop++;
-                    }
-                    // speed up the code about the _checkSingleNodeCollision();
-#pragma omp parallel
-                    {
-#pragma omp for  
-                        for (int i = 0; i < check_below_WpSet.size(); i++) {
-
-                            for (GLKPOSITION prevWpNodePos = check_below_WpSet[i]->GetNodeList().GetHeadPosition(); prevWpNodePos;) {
-                                QMeshNode* prevWpNode = (QMeshNode*)check_below_WpSet[i]->GetNodeList().GetNext(prevWpNodePos);
-
-                                if (patch->rootPatch_jumpPatch->GetIndexNo() == check_below_WpSet[i]->GetIndexNo()) {
-                                    if (prevWpNode->GetIndexNo() >= Node->GetIndexNo()) continue;
-                                }
-
-                                bool isInHull = _isPnt_in_mesh(eHeadPatch, prevWpNode->m_printPos);
-
-                                if (isInHull) {
-                                    iscollision_candidate_cNode = true;
-                                    break;
-                                }
-                            }
-                            if (iscollision_candidate_cNode == true) break;
-                        }
-                    }
-
-                    //add platform collision detection
-                    for (GLKPOSITION eHead_NodePos = eHeadPatch->GetNodeList().GetHeadPosition(); eHead_NodePos;) {
-                        QMeshNode* eHead_Node = (QMeshNode*)eHeadPatch->GetNodeList().GetNext(eHead_NodePos);
-
-                        double eHead_xx, eHead_yy, eHead_zz = 0.0;
-                        eHead_Node->GetCoord3D(eHead_xx, eHead_yy, eHead_zz);
-                        // this is decided by Zup and 0-height table.
-                        if (eHead_zz < 0.0) {
-                            iscollision_candidate_cNode = true;
-                            break;
-                        }
-                    }
-
-
-                    if (iscollision_candidate_cNode == false) {
-                        candidate_normal_NUM++;
-                        _install_BC_newConfig(candidateNor, graph_Node, Node);
-
-                    }
-                }
-            }
-            // no collision-free candidate, use the orginal one (temp)
-            if (candidate_normal_NUM == 0) {
-                _install_BC_newConfig(Node->m_printNor, graph_Node, Node);
-            }
-        }
-        else {
-            _install_BC_newConfig(Node->m_printNor, graph_Node, Node);
-        }
-    }
-
-    //protect: no candidate normal is danger
-    for (GLKPOSITION Pos = patch->GetNodeList().GetHeadPosition(); Pos;) {
-        QMeshNode* Node = (QMeshNode*)patch->GetNodeList().GetNext(Pos);
-
-        bool exist_Candidate = false;
-        for (int i = 0; i < graph_Node.size(); i++) {
-
-            if (graph_Node[i].waypoint_N_i == Node) {
-                exist_Candidate = true;
-                break;
-            }
-        }
-        if (!exist_Candidate) std::cout << "The Node " << Node->GetIndexNo()
-            << " in patch " << patch->rootPatch_jumpPatch->GetIndexNo()
-            << " has no collision-free normal!" << std::endl;
-    }
-}
 
 Eigen::Vector3d GcodeGeneration::_calCandidateNormal(Eigen::Vector3d normal, double rad_ZrotateAngle, double rad_XtiltAngle) {
 
@@ -2535,7 +2176,7 @@ void GcodeGeneration::_install_BC(Eigen::Vector3d temp_Normal,
 
     collision_Node cNode_1;
     cNode_1.B_value = ROTATE_TO_DEGREE(-_safe_acos(temp_Normal(2)));
-    cNode_1.C_value = ROTATE_TO_DEGREE(atan2(temp_Normal(0), temp_Normal(1)));
+    cNode_1.C_value = ROTATE_TO_DEGREE(m_toolTransform->CalculateCAngle(temp_Normal(0), temp_Normal(1)));
     cNode_1.waypoint_N_i = sourceNode;
 
     // solve 2
@@ -2565,40 +2206,7 @@ void GcodeGeneration::_install_BC(Eigen::Vector3d temp_Normal,
     //graph_Node.push_back(cNode_2);
 }
 
-void GcodeGeneration::_install_BC_newConfig(Eigen::Vector3d temp_Normal,
-    std::vector<collision_Node>& graph_Node, QMeshNode* sourceNode) {
 
-    collision_Node cNode_1;
-    cNode_1.B_value = ROTATE_TO_DEGREE(-_safe_acos(temp_Normal(2)));
-    cNode_1.C_value = ROTATE_TO_DEGREE(-atan2(temp_Normal(0), temp_Normal(1)));
-    cNode_1.waypoint_N_i = sourceNode;
-
-    // solve 2
-    collision_Node cNode_2;
-    cNode_2.B_value = -cNode_1.B_value;
-    double C2temp = cNode_1.C_value + 180.0;
-    if (C2temp > 180.0)	C2temp -= 360.0; // control the range of C2 into the (-180,180]
-    cNode_2.C_value = C2temp;
-    cNode_2.waypoint_N_i = sourceNode;
-
-    //keep the first is less than second BC solve
-    if (fabs(cNode_1.C_value) < fabs(cNode_2.C_value)) {
-        graph_Node.push_back(cNode_1);
-        graph_Node.push_back(cNode_2);
-    }
-    else {
-        graph_Node.push_back(cNode_2);
-        graph_Node.push_back(cNode_1);
-    }
-
-    //keep the first is Solution 1   
-    //graph_Node.push_back(cNode_1);
-    //graph_Node.push_back(cNode_2);
-
-    //keep use Solution 1
-    //graph_Node.push_back(cNode_2);
-    //graph_Node.push_back(cNode_2);
-}
 
 void GcodeGeneration::_build_Graph(QMeshPatch* patch, std::vector<collision_Node>& graph_Node) {
 
@@ -2650,73 +2258,17 @@ void GcodeGeneration::_build_Graph(QMeshPatch* patch, std::vector<collision_Node
         double B = DEGREE_TO_ROTATE(Node->m_XYZBCE(3));
         double C = DEGREE_TO_ROTATE(Node->m_XYZBCE(4));
 
-        double finalNx = -sin(B) * sin(C);
-        double finalNy = -sin(B) * cos(C);
-        double finalNz = cos(B);
+        Eigen::Vector3d targetNormal = m_toolTransform->ToPrintNormal(B, C);
+        double finalNx = targetNormal.x();
+        double finalNy = targetNormal.y();
+        double finalNz = targetNormal.z();
 
         Node->m_printNor << finalNx, finalNy, finalNz;
         Node->SetNormal(finalNx, finalNy, finalNz);
     }
 }
 
-void GcodeGeneration::_build_Graph_newConfig(QMeshPatch* patch, std::vector<collision_Node>& graph_Node) {
 
-    int V = graph_Node.size();
-    std::vector<int> startNode_NoSet;
-    std::vector<int> endNode_NoSet;
-
-    //get index of end Nodes of graph
-    for (int i = 0; i < graph_Node.size(); i++) {
-
-        if (graph_Node[i].waypoint_N_i->Jump_SecIndex == 0)
-            startNode_NoSet.push_back(i);
-
-        if (graph_Node[i].waypoint_N_i->Jump_SecIndex == (patch->GetNodeNumber() - 1))
-            endNode_NoSet.push_back(i);
-    }
-
-    Graph g(V, endNode_NoSet);
-
-    for (int i = 0; i < graph_Node.size(); i++) {
-        for (int j = (i + 1); j < graph_Node.size(); j++) {
-
-            if ((graph_Node[i].waypoint_N_i->Jump_SecIndex + 1)
-                == graph_Node[j].waypoint_N_i->Jump_SecIndex) {
-
-                double weight = _weight_calculation(
-                    graph_Node[i].B_value, graph_Node[i].C_value,
-                    graph_Node[j].B_value, graph_Node[j].C_value);
-
-                //if (i == graph_Node.size() / 2) weight *= 5;
-
-                g.addEdge(i, weight, j);
-            }
-        }
-    }
-
-    g.shortestPath(0);
-    for (int i = 0; i < g.path.size(); i++) {
-        graph_Node[g.path[i]].waypoint_N_i->m_XYZBCE(3) = graph_Node[g.path[i]].B_value;
-        graph_Node[g.path[i]].waypoint_N_i->m_XYZBCE(4) = graph_Node[g.path[i]].C_value;
-        //std::cout << g.path[i] << " ";
-    }
-    //std::cout << std::endl;
-
-    //BC -> normal -> show
-    for (GLKPOSITION Pos = patch->GetNodeList().GetHeadPosition(); Pos;) {
-        QMeshNode* Node = (QMeshNode*)patch->GetNodeList().GetNext(Pos);
-
-        double B = DEGREE_TO_ROTATE(Node->m_XYZBCE(3));
-        double C = DEGREE_TO_ROTATE(Node->m_XYZBCE(4));
-
-        double finalNx = sin(B) * sin(C);
-        double finalNy = -sin(B) * cos(C);
-        double finalNz = cos(B);
-
-        Node->m_printNor << finalNx, finalNy, finalNz;
-        Node->SetNormal(finalNx, finalNy, finalNz);
-    }
-}
 
 double GcodeGeneration::_weight_calculation(double B_i, double C_i, double B_ii, double C_ii) {
 
@@ -3108,8 +2660,8 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
     int F_PumpBack = 6000;						// Speed of F_PumpBack
     int F_PumpCompensate = 900;				    // Speed of PumpCompensate
 
-    double E_PumpBack = -6.0; 					// The extruder pump back Xmm
-    double E_PumpCompensate = 6.0;				// The extruder pump compensate Xmm
+    double E_PumpBack = -RetractionLength; 					// The extruder pump back Xmm
+    double E_PumpCompensate = RetractionLength;				// The extruder pump compensate Xmm
     double E_PumpCompensateL1 = 4;				// The extruder pump compensate for 1st layer Xmm
     double E_PumpCompensateNewE = 4;			// The extruder pump compensate for new type layer Xmm
 
@@ -3145,7 +2697,7 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
     std::fprintf(fp, "G54\n");
     std::fprintf(fp, "(Position 1)\n");
     std::fprintf(fp, "G94\n");
-    std::fprintf(fp, "G1 X0.000 Y0.000 Z%.2f B0.000 C0.000 F%d\n", Z_home, F_G1_move);
+    std::fprintf(fp, "G1 X0.000 Y0.000 Z%.2f " AX_B "0.000 " AX_C "0.000 F%d\n", Z_home, F_G1_move);
 
     for (GLKPOSITION Pos = m_Waypoints->GetMeshList().GetHeadPosition(); Pos;) {
         QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(Pos);
@@ -3191,7 +2743,15 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
 
             //---------------------------------------------------------------------------------------------------------------------------------
             // meed to be verified
-            B = -B; C = -C;
+            /*if (!TCP) {
+                B = -B; C = -C;
+
+                // X und Y für den G-Code-Output vertauschen
+                double temp_XY = X;
+                X = Y;
+                Y = temp_XY;
+            }
+            */
             //---------------------------------------------------------------------------------------------------------------------------------
 
             // Add some auxiliary G code
@@ -3199,13 +2759,13 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
                 // for the 1st(LayerInd_From) printed layer
                 if (WayPointPatch->GetIndexNo() == m_FromIndex) {
                     // move to start of printing location
-                    std::fprintf(fp, "G1 X%.2f Y%.2f B%.2f C%.2f F%d\n", X, Y, B, C, F_G1_move);
+                    std::fprintf(fp, "G1 X%.2f Y%.2f " AX_B "%.2f " AX_C "%.2f F%d\n", X, Y, B, C, F_G1_move);
                     // slowly lower for printing
                     std::fprintf(fp, "G1 Z%.2f F%d\n", (Z_max + Z_compensateUpDistance), F_G1_move);
                     // zero extruded length(set E axis to 0)
-                    std::fprintf(fp, "G92 A0\n");
-                    std::fprintf(fp, "G1 A%.2f F%d\n", E_PumpCompensateL1, F_PumpCompensate);
-                    std::fprintf(fp, "G92 A0\n");
+                    std::fprintf(fp, "G92 " AX_E "0\n");
+                    std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", E_PumpCompensateL1, F_PumpCompensate);
+                    std::fprintf(fp, "G92 " AX_E "0\n");
                     std::fprintf(fp, "G1 F%d\n", F_G1_1stlayer);
                 }
                 //new layer and same extruder
@@ -3214,37 +2774,37 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
                     // return to the safe point Z_max + Z_high
                     std::fprintf(fp, "G1 Z%.2f F%d\n", (Z_max + Z_high), F_G1_move);
 
-                    std::fprintf(fp, "G92 A0\n");
-                    std::fprintf(fp, "G1 A%.2f F%d\n", E_PumpBack, F_PumpBack);
-                    std::fprintf(fp, "G92 A0\n");
+                    std::fprintf(fp, "G92 " AX_E "0\n");
+                    std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", E_PumpBack, F_PumpBack);
+                    std::fprintf(fp, "G92 " AX_E "0\n");
                     //// return to the safe point Z_max + Z_high (move this to front of retraction of extrusion)
                     //std::fprintf(fp, "G1 Z%.2f F%d\n", (Z_max + Z_high), F_G1_move);
                     // move to start of printing location
-                    std::fprintf(fp, "G1 X%.2f Y%.2f B%.2f C%.2f F%d\n", X, Y, B, C, F_G1_move);
+                    std::fprintf(fp, "G1 X%.2f Y%.2f " AX_B "%.2f " AX_C "%.2f F%d\n", X, Y, B, C, F_G1_move);
                     // slowly lower for printing
                     std::fprintf(fp, "G1 Z%.2f F%d\n", (Z + Z_compensateUpDistance), F_G1_move);
                     // compensate extrusion
-                    std::fprintf(fp, "G1 A%.2f F%d\n", E_PumpCompensate, F_PumpCompensate);
-                    std::fprintf(fp, "G92 A0\n");
+                    std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", E_PumpCompensate, F_PumpCompensate);
+                    std::fprintf(fp, "G92 " AX_E "0\n");
                     std::fprintf(fp, "G1 F%d\n", F_G1_original);
 
                 }
                 // case: exchange extrude material
                 else {
-                    std::fprintf(fp, "G92 A0\n");
-                    std::fprintf(fp, "G1 A%.2f F%d\n", E_PumpBack, F_PumpBack);
+                    std::fprintf(fp, "G92 " AX_E "0\n");
+                    std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", E_PumpBack, F_PumpBack);
                     // return to the home point Z_home
                     std::fprintf(fp, "G1 Z%.2f F%d\n", Z_home, F_G1_move);
-                    std::fprintf(fp, "G92 A0\n");
+                    std::fprintf(fp, "G92 " AX_E "0\n");
                     // move to start of printing location
-                    std::fprintf(fp, "G1 X%.2f Y%.2f B%.2f C%.2f F%d\n", X, Y, B, C, F_G1_move);
+                    std::fprintf(fp, "G1 X%.2f Y%.2f " AX_B "%.2f " AX_C "%.2f F%d\n", X, Y, B, C, F_G1_move);
                     std::fprintf(fp, "G1 Z%.2f F%d\n", (Z + Z_compensateUpDistance), F_G1_move);
                     // slowly lower for printing
-                    std::fprintf(fp, "G1 A%.2f F%d\n", E_PumpCompensateNewE, F_PumpCompensate);
-                    std::fprintf(fp, "G92 A0\n");
+                    std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", E_PumpCompensateNewE, F_PumpCompensate);
+                    std::fprintf(fp, "G92 " AX_E "0\n");
                     std::fprintf(fp, "G1 F%d\n", F_G1_support);
                 }
-                std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f B%.2f C%.2f A%.2f F%d\n", X, Y, Z, B, C, E, F);
+                std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f " AX_B "%.2f " AX_C "%.2f " AX_E "%.2f F%d\n", X, Y, Z, B, C, E, F);
 
                 //add by tianyu 10/04/2022
                 //output the insert information
@@ -3253,9 +2813,18 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
                     //std::cout << "\n\n I am here! \n" << std::endl;
                     std::cout << "Node->insertNodesInfo.size()" << Node->insertNodesInfo.size() << std::endl;
                     for (int i = 0; i < Node->insertNodesInfo.size(); i++) {
-                        std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f B%.2f C%.2f A%.2f F%d\n",
-                            Node->insertNodesInfo[i](0), Node->insertNodesInfo[i](1), Node->insertNodesInfo[i](2),
-                            -Node->insertNodesInfo[i](3), -Node->insertNodesInfo[i](4), Node->insertNodesInfo[i](5)), F;
+                        double insX = Node->insertNodesInfo[i](0);
+                        double insY = Node->insertNodesInfo[i](1);
+                        double insB = Node->insertNodesInfo[i](3);
+                        double insC = Node->insertNodesInfo[i](4);
+                        //if (!TCP) {
+                       //     std::swap(insX, insY);
+                        //    insB = -insB;
+                         //   insC = -insC;
+                       // }
+                        std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f " AX_B "%.2f " AX_C "%.2f " AX_E "%.2f F%d\n",
+                            insX, insY, Node->insertNodesInfo[i](2),
+                            insB, insC, Node->insertNodesInfo[i](5), F);
                     }
                 }
             }
@@ -3270,24 +2839,24 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
 
                     if (WayPointPatch->is_SupportLayer == true) {
 
-                        std::fprintf(fp, "G1 A%.2f F%d\n", (E + E_PumpBack * 0.8), F_PumpBack);
+                        std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", (E + E_PumpBack * 0.8), F_PumpBack);
                         std::fprintf(fp, "G1 Z%.2f F%d\n", (Z_max + Z_high), F_G1_move);
-                        std::fprintf(fp, "G1 X%.2f Y%.2f B%.2f C%.2f F%d\n", X, Y, B, C, F_G1_move);
+                        std::fprintf(fp, "G1 X%.2f Y%.2f " AX_B "%.2f " AX_C "%.2f F%d\n", X, Y, B, C, F_G1_move);
                         std::fprintf(fp, "G1 Z%.2f F%d\n", (Z + Z_compensateUpDistance), F_G1_move);
-                        std::fprintf(fp, "G1 A%.2f F%d\n", (E - 0.1), F_PumpCompensate);
-                        std::fprintf(fp, "G1 Z%.2f A%.2f F%d\n", Z, E, F_G1_support);
+                        std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", (E - 0.1), F_PumpCompensate);
+                        std::fprintf(fp, "G1 Z%.2f " AX_E "%.2f F%d\n", Z, E, F_G1_support);
                     }
                     else {
 
-                        std::fprintf(fp, "G1 A%.2f F%d\n", (E + E_PumpBack), F_PumpBack);
+                        std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", (E + E_PumpBack), F_PumpBack);
                         std::fprintf(fp, "G1 Z%.2f F%d\n", (Z_max + Z_high), F_G1_move);
-                        std::fprintf(fp, "G1 X%.2f Y%.2f B%.2f C%.2f F%d\n", X, Y, B, C, F_G1_move);
+                        std::fprintf(fp, "G1 X%.2f Y%.2f " AX_B "%.2f " AX_C "%.2f F%d\n", X, Y, B, C, F_G1_move);
                         std::fprintf(fp, "G1 Z%.2f F%d\n", (Z + Z_compensateUpDistance), F_G1_move);
-                        std::fprintf(fp, "G1 A%.2f F%d\n", (E - 0.1), F_PumpCompensate);
-                        std::fprintf(fp, "G1 Z%.2f A%.2f F%d\n", Z, E, F_G1_original);
+                        std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", (E - 0.1), F_PumpCompensate);
+                        std::fprintf(fp, "G1 Z%.2f " AX_E "%.2f F%d\n", Z, E, F_G1_original);
                     }
                 }
-                std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f B%.2f C%.2f A%.2f F%d\n", X, Y, Z, B, C, E, F);
+                std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f " AX_B "%.2f " AX_C "%.2f " AX_E "%.2f F%d\n", X, Y, Z, B, C, E, F);
 
                 //add by tianyu 10/04/2022
                 //output the insert information
@@ -3296,9 +2865,18 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
                     //std::cout << "\n\n I am here! \n" << std::endl;
                     std::cout << "Node->insertNodesInfo.size()" << Node->insertNodesInfo.size() << std::endl;
                     for (int i = 0; i < Node->insertNodesInfo.size(); i++) {
-                        std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f B%.2f C%.2f A%.2f F%d\n",
-                            Node->insertNodesInfo[i](0), Node->insertNodesInfo[i](1), Node->insertNodesInfo[i](2),
-                            -Node->insertNodesInfo[i](3), -Node->insertNodesInfo[i](4), Node->insertNodesInfo[i](5), F);
+                        double insX = Node->insertNodesInfo[i](0);
+                        double insY = Node->insertNodesInfo[i](1);
+                        double insB = Node->insertNodesInfo[i](3);
+                        double insC = Node->insertNodesInfo[i](4);
+                        //if (!TCP) {
+                            std::swap(insX, insY);
+                            insB = -insB;
+                            insC = -insC;
+                        //}
+                        std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f " AX_B "%.2f " AX_C "%.2f " AX_E "%.2f F%d\n",
+                            insX, insY, Node->insertNodesInfo[i](2),
+                            insB, insC, Node->insertNodesInfo[i](5), F);
                     }
                 }
             }
@@ -3306,10 +2884,10 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
         IsSupportLayer_last = WayPointPatch->is_SupportLayer;
     }
 
-    std::fprintf(fp, "G92 A0\n");
-    std::fprintf(fp, "G1 A%.2f F%d\n", E_PumpBack, F_G1_move); // PumpBack
+    std::fprintf(fp, "G92 " AX_E "0\n");
+    std::fprintf(fp, "G1 " AX_E "%.2f F%d\n", E_PumpBack, F_G1_move); // PumpBack
     std::fprintf(fp, "G1 Z%.2f F%d\n", Z_home, F_G1_move); // return to the home point Z_home
-    std::fprintf(fp, "G1 X0.0 Y0.0 B0.0 C0.0 F%d\n", F_G1_move);
+    std::fprintf(fp, "G1 X0.0 Y0.0 " AX_B "0.0 " AX_C "0.0 F%d\n", F_G1_move);
     std::fprintf(fp, "M30\n");// Stop all of the motion
 
     std::fclose(fp);
@@ -3354,8 +2932,8 @@ void GcodeGeneration::readGcodeFile(Eigen::MatrixXf& Gcode_Table, std::string Fi
         std::string str = linebuf;
         std::string::size_type position_X = str.find("X");  std::string::size_type position_Y = str.find("Y");
         std::string::size_type position_Z = str.find("Z");
-        std::string::size_type position_B = str.find("B");	std::string::size_type position_C = str.find("C");
-        std::string::size_type position_E = str.find("A");	std::string::size_type position_F = str.find("F");
+        std::string::size_type position_B = str.find(AX_B);	std::string::size_type position_C = str.find(AX_C);
+        std::string::size_type position_E = str.find(AX_E);	std::string::size_type position_F = str.find("F");
 
         //std::cout << position_X << " " << position_Y << " " << position_Z << " " << position_B << " " << position_C << std::endl;
 
@@ -3469,151 +3047,14 @@ void GcodeGeneration::readGcodeFile(Eigen::MatrixXf& Gcode_Table, std::string Fi
 
     std::cout << "------------------------------------------- Gcode Load Finish!" << std::endl;
 
-    this->_readCncData(2);
+    if (m_toolTransformKind == ToolTransformKind::kToolTiltTurn) {
+        this->_readCncData(3);
+    } else {
+        this->_readCncData(2);
+    }
 }
 
-void GcodeGeneration::readGcodeFile_newConfig(Eigen::MatrixXf& Gcode_Table, std::string FileName) {
 
-    char targetFilename[1024];
-    std::sprintf(targetFilename, "%s%s", "../DataSet/G_CODE/", FileName.c_str());
-    FILE* fp; char linebuf[2048];
-    double machine_X = 0.0, machine_Y = 0.0, machine_Z = 300.0, machine_B = 0.0, machine_C = 0.0;
-    fp = fopen(targetFilename, "r");
-    if (!fp) {
-        printf("===============================================\n");
-        printf("Can not open the data file - Gcode File Import!\n");
-        printf("===============================================\n");
-        return;
-    }
-
-    //get the num of lines in Gcode file.
-    int lines = 0;
-    while (true) {
-        fgets(linebuf, 255, fp);
-        if (feof(fp)) break;
-        lines++;
-    }
-    std::fclose(fp);
-    //std::cout << lines << std::endl;
-
-    fp = fopen(targetFilename, "r");
-    Gcode_Table = Eigen::MatrixXf::Zero(lines, 6);
-    bool T3_flag = false;
-    for (int i = 0; i < lines; i++) {
-
-        double newLayerFlag = 0.0;// DOUBLE type is for the compactness of data structure
-
-        fgets(linebuf, 255, fp);
-        //std::cout << linebuf;
-
-        std::string str = linebuf;
-        std::string::size_type position_X = str.find("X");  std::string::size_type position_Y = str.find("Y");
-        std::string::size_type position_Z = str.find("Z");
-        std::string::size_type position_B = str.find("B");	std::string::size_type position_C = str.find("C");
-        std::string::size_type position_E = str.find("A");	std::string::size_type position_F = str.find("F");
-
-        //std::cout << position_X << " " << position_Y << " " << position_Z << " " << position_B << " " << position_C << std::endl;
-
-        std::string::size_type GFlag = str.find("G");
-        if (GFlag != std::string::npos) {
-            // G1 X0.000 Y0.000 Z250.000 B0.000 C0.000 F2000
-            if (position_X != str.npos && position_Y != str.npos && position_Z != str.npos
-                && position_B != str.npos && position_C != str.npos
-                && position_E == str.npos && position_F != str.npos) {
-
-                std::string X_temp = str.substr(position_X + 1, position_Y - position_X - 2);
-                std::string Y_temp = str.substr(position_Y + 1, position_Z - position_Y - 2);
-                std::string Z_temp = str.substr(position_Z + 1, position_B - position_Z - 2);
-                std::string B_temp = str.substr(position_B + 1, position_C - position_B - 2);
-                std::string C_temp = str.substr(position_C + 1, position_F - position_C - 2);
-
-                machine_X = atof(X_temp.c_str());	machine_Y = atof(Y_temp.c_str());	machine_Z = atof(Z_temp.c_str());
-                machine_B = atof(B_temp.c_str());	machine_C = atof(C_temp.c_str());
-
-            }
-            // G1 X-2.207 Y88.771 Z114.490 B55.324 C-861.683 A782.472 F2000
-            // the most common case
-            else if (position_X != str.npos && position_Y != str.npos && position_Z != str.npos
-                && position_B != str.npos && position_C != str.npos
-                && position_E != str.npos && position_F != str.npos) {
-
-                std::string X_temp = str.substr(position_X + 1, position_Y - position_X - 2);
-                std::string Y_temp = str.substr(position_Y + 1, position_Z - position_Y - 2);
-                std::string Z_temp = str.substr(position_Z + 1, position_B - position_Z - 2);
-                std::string B_temp = str.substr(position_B + 1, position_C - position_B - 2);
-                std::string C_temp = str.substr(position_C + 1, position_E - position_C - 2);
-
-                machine_X = atof(X_temp.c_str());	machine_Y = atof(Y_temp.c_str());	machine_Z = atof(Z_temp.c_str());
-                machine_B = atof(B_temp.c_str());	machine_C = atof(C_temp.c_str());
-
-            }
-            // G1 X2.003 Y87.702 B55.445 C51.857 F2000
-            else if (position_X != str.npos && position_Y != str.npos && position_Z == str.npos
-                && position_B != str.npos && position_C != str.npos
-                && position_E == str.npos && position_F != str.npos) {
-
-                std::string X_temp = str.substr(position_X + 1, position_Y - position_X - 2);
-                std::string Y_temp = str.substr(position_Y + 1, position_B - position_Y - 2);
-                std::string B_temp = str.substr(position_B + 1, position_C - position_B - 2);
-                std::string C_temp = str.substr(position_C + 1, position_F - position_C - 2);
-
-                machine_X = atof(X_temp.c_str());	machine_Y = atof(Y_temp.c_str());
-                machine_B = atof(B_temp.c_str());	machine_C = atof(C_temp.c_str());
-            }
-            // G1 Z2.940 F4750
-            else if (position_X == str.npos && position_Y == str.npos && position_Z != str.npos
-                && position_B == str.npos && position_C == str.npos
-                && position_E == str.npos && position_F != str.npos) {
-
-                std::string Z_temp = str.substr(position_Z + 1, position_F - position_Z - 2);
-
-                machine_Z = atof(Z_temp.c_str());
-            }
-            // G1 Z3.022 E562.31 F4750
-            else if (position_X == str.npos && position_Y == str.npos && position_Z != str.npos
-                && position_B == str.npos && position_C == str.npos
-                && position_E != str.npos && position_F != str.npos) {
-
-                std::string Z_temp = str.substr(position_Z + 1, position_E - position_Z - 2);
-
-                machine_Z = atof(Z_temp.c_str());
-
-            }
-            // G1 F1500 // for new layer flag
-            else if (position_X == str.npos && position_Y == str.npos && position_Z == str.npos
-                && position_B == str.npos && position_C == str.npos
-                && position_E == str.npos && position_F != str.npos) {
-
-                newLayerFlag = 1.0;
-            }
-            // test for special case
-            // else { cout << "------------------------------------------ some special case" << endl; }
-
-        }
-        // test for special case
-        // else { cout << "------------------------------------------ some special case" << endl; }
-        //std::cout << "X: " << machine_X << " Y: " << machine_Y << " Z: " << machine_Z
-        //	<< " B: " << machine_B << " C: " << machine_C << std::endl << std::endl;
-
-        Gcode_Table.row(i) << machine_X, machine_Y, machine_Z, -machine_B, -machine_C, newLayerFlag;
-    }
-    std::fclose(fp);
-
-    std::cout << "Value range of X axis: [" << Gcode_Table.col(0).maxCoeff()
-        << ", " << Gcode_Table.col(0).minCoeff() << "]" << std::endl;
-    std::cout << "Value range of Y axis: [" << Gcode_Table.col(1).maxCoeff()
-        << ", " << Gcode_Table.col(1).minCoeff() << "]" << std::endl;
-    std::cout << "Value range of Z axis: [" << Gcode_Table.col(2).maxCoeff()
-        << ", " << Gcode_Table.col(2).minCoeff() << "]" << std::endl;
-    std::cout << "Value range of B axis: [" << Gcode_Table.col(3).maxCoeff()
-        << ", " << Gcode_Table.col(3).minCoeff() << "]" << std::endl;
-    std::cout << "Value range of C axis: [" << Gcode_Table.col(4).maxCoeff()
-        << ", " << Gcode_Table.col(4).minCoeff() << "]" << std::endl;
-
-    std::cout << "------------------------------------------- Gcode Load Finish!" << std::endl;
-
-    this->_readCncData(3);
-}
 
 // initial method only IK
 void GcodeGeneration::cal_XYZBCE_test() {
@@ -3626,20 +3067,21 @@ void GcodeGeneration::cal_XYZBCE_test() {
             QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(Pos);
 
             //cal E
-            Node->m_XYZBCE(5) = 0.25 * Node->m_DHW(0);
+            Node->m_XYZBCE(5) = 0.25 * Node->m_DHW(0) * FlowMultiplier;
             //cal BC
             double rad_B, rad_C;
             double nx, ny, nz;
             nx = Node->m_printNor(0); ny = Node->m_printNor(1); nz = Node->m_printNor(2);
             rad_B = -acos(nz);//rad
-            rad_C = atan2(nx, ny); //rad
+            rad_C = m_toolTransform->CalculateCAngle(nx, ny); //rad
             //cal XYZ
             double px, py, pz;
             px = Node->m_printPos(0); py = Node->m_printPos(1); pz = Node->m_printPos(2);
 
-            Node->m_XYZBCE(0) = px * cos(rad_C) - py * sin(rad_C);
-            Node->m_XYZBCE(1) = px * sin(rad_C) + py * cos(rad_C) - h * sin(rad_B);
-            Node->m_XYZBCE(2) = pz - h * (1 - cos(rad_B));
+            Eigen::Vector3d machinePos = _toMachinePosition(Node->m_printPos, rad_B, rad_C);
+            Node->m_XYZBCE(0) = machinePos.x();
+            Node->m_XYZBCE(1) = machinePos.y();
+            Node->m_XYZBCE(2) = machinePos.z();
             //record BC_deg
             Node->m_XYZBCE(3) = ROTATE_TO_DEGREE(rad_B);
             Node->m_XYZBCE(4) = ROTATE_TO_DEGREE(rad_C);

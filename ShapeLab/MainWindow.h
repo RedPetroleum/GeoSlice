@@ -32,6 +32,8 @@ typedef enum S_type {
 
 using namespace std;
 
+class QComboBox;
+
 class DeformTet;
 
 namespace Ui {
@@ -59,6 +61,7 @@ private:
     int gcodetimerItertime;
     int simuLayerInd;
     Eigen::MatrixXf Gcode_Table;
+    QComboBox* m_toolTransformCombo = nullptr;
     //unsigned int operationTime = 0;
     /* ------------------------ */
 	GLKObList polygenMeshList;
@@ -122,7 +125,7 @@ private:
         double X, double Y, double Z, double B, double C);
 
     S_type S3_case;
-    bool newConfig_CNC = false;
+    ToolTransformKind m_selectedToolTransformKind = ToolTransformKind::kToolTiltTurn;
 
 protected:
     void dragEnterEvent(QDragEnterEvent *event);
@@ -215,6 +218,7 @@ private slots:
 
     /*This is for Distance Calculation between scanning and model.*/
     void cal_Dist_scanAndmodel();
+    void onToolTransformChanged(int index);
 };
 
 #endif // MAINWINDOW_H

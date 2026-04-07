@@ -10,6 +10,7 @@
 #include <QMessageBox>
 #include <QScreen>
 #include <QStyleFactory>
+#include <QComboBox>
 #include <fstream>
 #include <Eigen/Eigen>
 #include <Eigen/PardisoSupport>
@@ -39,6 +40,23 @@ MainWindow::MainWindow(QWidget *parent) :
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+
+    auto toolTransformLayout = new QHBoxLayout();
+    auto toolTransformLabel = new QLabel(tr("Tool transform"), ui->tab_3);
+    toolTransformLabel->setFont(ui->label_42->font());
+    toolTransformLayout->addWidget(toolTransformLabel);
+
+    m_toolTransformCombo = new QComboBox(ui->tab_3);
+    m_toolTransformCombo->addItem(tr("TCP"));
+    m_toolTransformCombo->addItem(tr("Tool tilt/turn"));
+    m_toolTransformCombo->addItem(tr("Table tilt/turn"));
+    m_toolTransformCombo->setCurrentIndex(2);
+    toolTransformLayout->addWidget(m_toolTransformCombo, 1);
+
+    ui->verticalLayout_4->insertLayout(2, toolTransformLayout);
+
+    connect(m_toolTransformCombo, SIGNAL(currentIndexChanged(int)), this, SLOT(onToolTransformChanged(int)));
+    onToolTransformChanged(m_toolTransformCombo->currentIndex());
 
 	QApplication::setStyle(QStyleFactory::create("Fusion"));
 
@@ -3054,7 +3072,7 @@ void MainWindow::output_Toolpath_set() {
     }
     delete IO_operator;
 
-    std::cout << "Finish outputing surface mesh of the tetmesh. " << std::endl;
+    std::cout << "Finish outputing toolpath set. " << std::endl;
 }
 
 void MainWindow::readGcodeSourceData() {
@@ -3091,6 +3109,7 @@ void MainWindow::readGcodeSourceData() {
     if (ui->doubleSpinBox_toolLength->value() < 0.0) { std::cout << "the length of tool is error!!!" << std::endl;  return; }
 
     GcodeGene = new GcodeGeneration();
+    GcodeGene->SetToolTransformKind(m_selectedToolTransformKind);
     std::string modelName = ui->lineEdit_SorceDataDir->text().toStdString();
     std::string FileDir = "../DataSet/fabricationSource/" + modelName;
     GcodeGene->initial(isoLayerSet, toolpathSet, cncSet, ui->checkBox_Yup2Zup->isChecked(), FileDir,
@@ -3109,6 +3128,30 @@ void MainWindow::readGcodeSourceData() {
     pGLK->refresh(true);
     pGLK->Zoom_All_in_View();
     std::cout << "Finish inputing GcodeSource data.\n" << std::endl;
+}
+
+void MainWindow::onToolTransformChanged(int index) {
+
+    ToolTransformKind selectedKind = ToolTransformKind::kToolTiltTurn;
+    switch (index) {
+    case 0:
+        selectedKind = ToolTransformKind::kTcp;
+        break;
+    case 2:
+        selectedKind = ToolTransformKind::kTableTiltTurn;
+        break;
+    default:
+        selectedKind = ToolTransformKind::kToolTiltTurn;
+        break;
+    }
+
+    m_selectedToolTransformKind = selectedKind;
+    if (GcodeGene) {
+        GcodeGene->SetToolTransformKind(selectedKind);
+    }
+
+    // Switch between the classic algorithmic branches vs the new ones matching the strategy
+    // newConfig_CNC is deprecated by strategy pattern
 }
 
 void MainWindow::output_userWaypoints() {
@@ -3228,12 +3271,7 @@ void MainWindow::runDHWcalculation() {
 
 void MainWindow::runSingularityOpt() {
 
-    if (newConfig_CNC == false) {
-        GcodeGene->singularityOpt();
-    }
-    else {
-        GcodeGene->singularityOpt_newConfig();
-    }
+    GcodeGene->singularityOpt();
     GcodeGene->testXYZBCE(true);
     //ui->pushButton_output2Robot->setEnabled(true);
     pGLK->refresh(true);
@@ -3263,12 +3301,7 @@ void MainWindow::runCollisionCheck() {
 }
 
 void MainWindow::runCollisionElimination() {
-    if (newConfig_CNC == false) {
-        GcodeGene->graph_Search_Shortest_Path();
-    }
-    else {
-        GcodeGene->graph_Search_Shortest_Path_newConfig();
-    }
+    GcodeGene->graph_Search_Shortest_Path();
     GcodeGene->testXYZBCE(true); // does not output the inserted nodes
     pGLK->refresh(true);
 }
@@ -3296,8 +3329,7 @@ void MainWindow::runGcodeSimulation() {
     string FileName = (ui->lineEdit_SorceDataDir->text()).toStdString() + "_Gcode.txt";
     simuLayerInd = ui->spinBox_GcodeGeneFromIndex->value() - 1;//  will meet "G1 F1500" at the first several lines, so -1
     ui->checkBox_EachLayerSwitch->setCheckState(Qt::Checked);
-    if (newConfig_CNC == false) GcodeGene->readGcodeFile(Gcode_Table, FileName);
-    else GcodeGene->readGcodeFile_newConfig(Gcode_Table, FileName);
+    GcodeGene->readGcodeFile(Gcode_Table, FileName);
     ui->progressBar_GcodeSimulation->setRange(0, Gcode_Table.rows() - 1);
 
     gcodetimerItertime = 0;

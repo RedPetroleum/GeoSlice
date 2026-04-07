@@ -4,6 +4,7 @@
 
 #include "../QMeshLib/PolygenMesh.h"
 #include "../QMeshLib/QMeshPatch.h"
+#include "ToolTransformations.h"
 
 struct collision_Node {
 	double B_value;
@@ -14,8 +15,11 @@ struct collision_Node {
 class GcodeGeneration {
 
 public:
-	GcodeGeneration() {};
-	~GcodeGeneration() {};
+	GcodeGeneration();
+	~GcodeGeneration();
+
+	void SetToolTransformKind(ToolTransformKind kind);
+	ToolTransformKind GetToolTransformKind() const { return m_toolTransformKind; }
 
 	void initial(PolygenMesh* Slices, PolygenMesh* Waypoints,
 		PolygenMesh* CncPart, bool Yup2Zup, std::string Dir,
@@ -72,8 +76,9 @@ private:
 	bool _chooseB1C1(const Eigen::RowVector2d& B1C1,
 		const Eigen::RowVector2d& B2C2, Eigen::RowVector2d& prevBC);
 	double _toLeft(const Eigen::RowVector2d& origin, const Eigen::RowVector2d& startPnt, const Eigen::RowVector2d& endPnt);
+
 	void _getXYZ(QMeshPatch* patch);
-	void _getXYZ_newConfig(QMeshPatch* patch);
+
 	void _calDHW2E(QMeshPatch* patch, bool hysteresis_switch);
 	void _optimizationC(QMeshPatch* patch);
 	void _limit_C_range(QMeshPatch* patch);
@@ -139,9 +144,15 @@ private:
 
 	double maxDeltaC = 5.0;   // the max angle of C change when use inserting method
 	int toolpath_filter_threshold = 30; //skip little patch
-
 	std::string m_modelName;
+	bool is_planar_printing = false;
 
-	//switch for the planar printing
-	bool is_planar_printing = false; 
+	void _updateToolTransformStrategy();
+
+	Eigen::Vector3d _toMachinePosition(const Eigen::Vector3d& printPos, double radB, double radC) const;
+	Eigen::Vector3d _toPrintPosition(const Eigen::Vector3d& machinePos, double radB, double radC) const;
+
+	ToolTransformKind m_toolTransformKind = ToolTransformKind::kToolTiltTurn;
+	std::unique_ptr<ToolTransformStrategy> m_toolTransform;
+
 };
