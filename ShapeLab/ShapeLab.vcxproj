@@ -199,6 +199,13 @@
     <ClCompile Include="Fabrication.cpp" />
     <ClCompile Include="FileIO.cpp" />
     <ClCompile Include="GcodeGeneration.cpp" />
+    <ClCompile Include="GcodeGeneration_BC.cpp" />
+    <ClCompile Include="GcodeGeneration_Collision.cpp" />
+    <ClCompile Include="GcodeGeneration_DHW.cpp" />
+    <ClCompile Include="GcodeGeneration_Feedrate.cpp" />
+    <ClCompile Include="GcodeGeneration_Gcode.cpp" />
+    <ClCompile Include="GcodeGeneration_Graph.cpp" />
+    <ClCompile Include="GcodeGeneration_IO.cpp" />
     <ClCompile Include="Graph.cpp" />
     <ClCompile Include="IsoLayerGeneration.cpp" />
     <ClCompile Include="MainWindow.cpp" />
