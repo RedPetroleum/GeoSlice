@@ -31,18 +31,14 @@ public:
 		bool varyWidth_switch, bool outputDHW);
 	void calDHW();
 	void singularityOpt();
-	void singularityOpt_newConfig();
 	void cal_XYZBCE_test();
 	void detectCollision_2();
 	void graph_Search_Shortest_Path();
-	void graph_Search_Shortest_Path_newConfig();
 	void testXYZBCE(bool testXYZBC_E_switch);
 	void feedrateOpt();
 	void writeGcode(std::string GcodeDir);
 	void writeGcode_continousPrint(std::string GcodeDir);
 	void readGcodeFile(
-		Eigen::MatrixXf& Gcode_Table, std::string FileName);
-	void readGcodeFile_newConfig(
 		Eigen::MatrixXf& Gcode_Table, std::string FileName);
 
 private:
@@ -68,8 +64,6 @@ private:
 	void _projectAnchorPoint(QMeshPatch* patch);
 	void _getBCtable2(QMeshPatch* patch,
 		Eigen::MatrixXd& B1C1table, Eigen::MatrixXd& B2C2table);
-	void _getBCtable2_newConfig(QMeshPatch* patch,
-		Eigen::MatrixXd& B1C1table, Eigen::MatrixXd& B2C2table);
 	void _motionPlanning3(QMeshPatch* patch, 
 		const Eigen::MatrixXd& sectionTable, const Eigen::MatrixXd& B1C1table,
 		const Eigen::MatrixXd& B2C2table, Eigen::RowVector2d& prevBC);
@@ -83,7 +77,6 @@ private:
 	void _optimizationC(QMeshPatch* patch);
 	void _limit_C_range(QMeshPatch* patch);
 	void _verifyPosNor();
-	void _verifyPosNor_newConfig();
 	double _getAngle3D(const Eigen::Vector3d& v1,
 		const Eigen::Vector3d& v2, const bool in_degree);
 
@@ -97,16 +90,11 @@ private:
 
 	void _get_GraphNode_List(QMeshPatch* patch,
 		std::vector<collision_Node>& graph_Node);
-	void _get_GraphNode_List_newConfig(QMeshPatch* patch, 
-		std::vector<collision_Node>& graph_Node);
 	Eigen::Vector3d _calCandidateNormal(Eigen::Vector3d normal,
 		double rad_ZrotateAngle, double rad_XtiltAngle);
 	void _install_BC(Eigen::Vector3d temp_Normal,
 		std::vector<collision_Node>& graph_Node, QMeshNode* sourceNode);
-	void _install_BC_newConfig(Eigen::Vector3d temp_Normal,
-		std::vector<collision_Node>& graph_Node, QMeshNode* sourceNode);
 	void _build_Graph(QMeshPatch* patch, std::vector<collision_Node>& graph_Node);
-	void _build_Graph_newConfig(QMeshPatch* patch, std::vector<collision_Node>& graph_Node);
 	double _weight_calculation(double B_i, double C_i, double B_ii, double C_ii);
 
 public:
