@@ -102,8 +102,8 @@ public:
         double calcZ = -X * sinB * cosC + Y * sinB * sinC + Z * cosB;
 
         // X und Y Achse vertauschen
-        result.x() = calcY;
-        result.y() = calcX;
+        result.x() = calcX;
+        result.y() = calcY;
         result.z() = calcZ;
 
         return result;
@@ -119,8 +119,8 @@ public:
         const double cosC = std::cos(radC);
 
         // R�ckg�ngig machen der vertauschten Achsen
-        const double X_neu = machinePos.y(); 
-        const double Y_neu = machinePos.x(); 
+        const double X_neu = machinePos.x(); 
+        const double Y_neu = machinePos.y(); 
         const double Z_neu = machinePos.z();
 
         result.x() = X_neu * cosB * cosC + Y_neu * sinC - Z_neu * sinB * cosC;

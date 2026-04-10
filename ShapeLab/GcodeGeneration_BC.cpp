@@ -157,6 +157,119 @@ void GcodeGeneration::singularityOpt() {
 
 
 
+void GcodeGeneration::singularityOpt_direct() {
+
+    // Simplified BC calculation for table-tilt-turn machines.
+    // Always uses solution 1: B = -acos(Nz), C = CalculateCAngle(Nx, Ny).
+    // Avoids singularity handling and solution switching that produce
+    // counterintuitive paths on a Drehschwenktisch.
+
+    std::cout << "------------------------------------------- singularityOpt_direct running ... " << std::endl;
+    long time = clock();
+
+    double ratio = 0.58;
+
+    for (GLKPOSITION Pos = m_Waypoints->GetMeshList().GetHeadPosition(); Pos;) {
+        QMeshPatch* WayPointPatch = (QMeshPatch*)m_Waypoints->GetMeshList().GetNext(Pos);
+
+        if (WayPointPatch->GetIndexNo() < m_FromIndex || WayPointPatch->GetIndexNo() > m_ToIndex) continue;
+
+        // Step 1: compute B, C, XYZ and delta-E for each node.
+        // Outside singularity: B and C exact from the normal.
+        // Near singularity (|B| < lambda): C frozen at last known value; B re-derived
+        // from the frozen C and the actual normal so the tool stays as close as possible
+        // to the desired orientation. XYZ compensates automatically via _toMachinePosition
+        // because printPos is kept constant.
+        const double radLambda = DEGREE_TO_ROTATE(m_lambdaValue);
+        double prev_rad_B = 0.0;
+        double prev_rad_C = 0.0;
+        bool firstNode = true;
+
+        for (GLKPOSITION nPos = WayPointPatch->GetNodeList().GetHeadPosition(); nPos;) {
+            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(nPos);
+
+            const double Nx = Node->m_printNor(0);
+            const double Ny = Node->m_printNor(1);
+            const double Nz = Node->m_printNor(2);
+
+            double rad_B = -_safe_acos(Nz);
+            double rad_C;
+
+            if (is_planar_printing) {
+                rad_B = 0.0; rad_C = 0.0;
+            }
+            else if (firstNode) {
+                // first node: initialise with solution 1
+                rad_C = m_toolTransform->CalculateCAngle(Nx, Ny);
+            }
+            else if (fabs(rad_B) >= radLambda) {
+                // outside singularity: compare both kinematic solutions and keep the smoother one
+                double rad_B1 = -_safe_acos(Nz);
+                double rad_C1 = m_toolTransform->CalculateCAngle(Nx, Ny);
+                double rad_B2 = -rad_B1;
+                double rad_C2 = rad_C1 + (rad_C1 <= 0.0 ? PI : -PI);
+
+                double cost1 = _safe_acos(std::cos(rad_C1 - prev_rad_C)) + std::fabs(rad_B1 - prev_rad_B);
+                double cost2 = _safe_acos(std::cos(rad_C2 - prev_rad_C)) + std::fabs(rad_B2 - prev_rad_B);
+
+                if (cost1 <= cost2) {
+                    rad_B = rad_B1;
+                    rad_C = rad_C1;
+                }
+                else {
+                    rad_B = rad_B2;
+                    rad_C = rad_C2;
+                }
+            }
+            else {
+                // near singularity: freeze C, re-derive B from frozen C and actual N
+                rad_C = prev_rad_C;
+                // XY unit direction achievable with C_frozen (evaluated at B = 90 deg)
+                Eigen::Vector3d dir = m_toolTransform->ToPrintNormal(PI / 2.0, prev_rad_C);
+                // projection of actual N_xy onto that direction = effective tilt component
+                double proj = dir(0) * Nx + dir(1) * Ny;
+                // best B given frozen C: minimises angle between achievable and actual normal
+                rad_B = std::atan2(proj, Nz);
+            }
+
+            firstNode = false;
+            prev_rad_B = rad_B;
+            prev_rad_C = rad_C;
+
+            Node->m_XYZBCE(3) = ROTATE_TO_DEGREE(rad_B);
+            Node->m_XYZBCE(4) = ROTATE_TO_DEGREE(rad_C);
+
+            Eigen::Vector3d machinePos = _toMachinePosition(Node->m_printPos, rad_B, rad_C);
+            Node->m_XYZBCE(0) = machinePos.x();
+            Node->m_XYZBCE(1) = machinePos.y();
+            Node->m_XYZBCE(2) = machinePos.z();
+
+            double D = m_varyDistance_switch ? Node->m_DHW(0) : 0.65;
+            double H = m_varyHeight_switch   ? Node->m_DHW(1) : 0.8;
+            double W = m_varyWidth_switch    ? Node->m_DHW(2) : 0.5;
+            Node->m_XYZBCE(5) = ratio * H * D * W;
+        }
+
+        // Step 2: smooth C to eliminate +-360 deg jumps between consecutive nodes
+        _optimizationC(WayPointPatch);
+
+        // Step 3: accumulate delta-E to absolute E
+        double E = 0.0;
+        for (GLKPOSITION nPos = WayPointPatch->GetNodeList().GetHeadPosition(); nPos;) {
+            QMeshNode* Node = (QMeshNode*)WayPointPatch->GetNodeList().GetNext(nPos);
+            E += Node->m_XYZBCE(5);
+            Node->m_XYZBCE(5) = E;
+        }
+    }
+
+    std::printf("TIMER -- singularityOpt_direct takes %ld ms.\n", clock() - time);
+    std::cout << "------------------------------------------- singularityOpt_direct Finish!\n" << std::endl;
+
+    this->_verifyPosNor();
+}
+
+
+
 std::vector<QMeshPatch*> GcodeGeneration::_getJumpSection_patchSet(QMeshPatch* patch) {
 
     // Get the Jump section Num
@@ -342,7 +455,7 @@ void GcodeGeneration::_projectAnchorPoint(QMeshPatch* patch) {
             std::cout << "Error: as one normal cannot move to double directions" << std::endl;
         }
 
-        if (Node->GetIndexNo() == 0 || Node->GetIndexNo() == (patch->GetNodeNumber() - 1)) continue;
+        if (Node->Jump_SecIndex == 0 || Node->Jump_SecIndex == (patch->GetNodeNumber() - 1)) continue;
 
 
         if (Node->isSingularSecStartNode == true || Node->isSingularSecEndNode == true) {
@@ -350,10 +463,12 @@ void GcodeGeneration::_projectAnchorPoint(QMeshPatch* patch) {
             Eigen::Vector3d m_printNor_before = Node->m_printNor;
 
             double anchor_Nz = cos(DEGREE_TO_ROTATE(m_lambdaValue));
-            double temp_k = Node->m_printNor(1) / Node->m_printNor(0);
-            double anchor_Nx = sqrt((1 - anchor_Nz * anchor_Nz) / (1 + temp_k * temp_k));
-            if (Node->m_printNor(0) < 0.0) anchor_Nx = -anchor_Nx;
-            double anchor_Ny = anchor_Nx * temp_k;
+            // Project XY direction to the singularity boundary while preserving the
+            // original XY orientation.  Use atan2 to avoid division by zero when Nx==0.
+            double xy_angle = std::atan2(Node->m_printNor(1), Node->m_printNor(0));
+            double sin_lambda = sin(DEGREE_TO_ROTATE(m_lambdaValue));
+            double anchor_Nx = sin_lambda * std::cos(xy_angle);
+            double anchor_Ny = sin_lambda * std::sin(xy_angle);
 
             Node->SetNormal(anchor_Nx, anchor_Ny, anchor_Nz);
             Node->SetNormal_last(anchor_Nx, anchor_Ny, anchor_Nz);
@@ -436,11 +551,15 @@ void GcodeGeneration::_motionPlanning3(
             Eigen::RowVector2d tempBC;
             //all points of current path are IN the sigularity region
             if (i == sectionTable(sectionNumber, 0) && i == 0 && sectionTable(sectionNumber, 1) == (lines - 1)) {
+                // B: exact from kinematics (choose solution closer to prevBC)
+                // C: frozen at incoming C value
+                int solveFlag_all = _chooseB1C1(B1C1table.row(0), B2C2table.row(0), prevBC) ? 1 : 2;
+                double C_frozen = prevBC(1);
                 for (int secLineIndex = i; secLineIndex < lines; secLineIndex++) {
-
-                    tempBC = { 0.0, prevBC(1) };
+                    tempBC(0) = (solveFlag_all == 1) ? B1C1table(secLineIndex, 0) : B2C2table(secLineIndex, 0);
+                    tempBC(1) = C_frozen;
                     prevBC = tempBC;
-                    solveFlag[secLineIndex] = 1;
+                    solveFlag[secLineIndex] = solveFlag_all;
                     BC_Matrix.row(secLineIndex) = prevBC;
                 }
                 i = lines;
@@ -449,23 +568,17 @@ void GcodeGeneration::_motionPlanning3(
             else if (i == sectionTable(sectionNumber, 0) && i == 0 && sectionTable(sectionNumber, 1) != (lines - 1)) {
 
                 int secEndIndex = sectionTable(sectionNumber, 1);
+                // solution chosen once based on exit boundary; C frozen at incoming C
+                int solveFlag_start = (_chooseB1C1(B1C1table.row(secEndIndex), B2C2table.row(secEndIndex), prevBC)
+                                       || true /*always start from solution 1*/) ? 1 : 2;
+                double C_frozen = prevBC(1);
 
                 for (int secLineIndex = i; secLineIndex < secEndIndex; secLineIndex++) {
-
-                    if (_chooseB1C1(B1C1table.row(secEndIndex), B2C2table.row(secEndIndex), prevBC)
-                        || (secLineIndex == 0) // this can make sure start from solution 1
-                        ) {
-                        tempBC << B1C1table.row(secEndIndex);
-                        solveFlag[secLineIndex] = 1;
-                    }
-                    else {
-                        tempBC << B2C2table.row(secEndIndex);
-                        solveFlag[secLineIndex] = 2;
-                    }
-
+                    tempBC(0) = (solveFlag_start == 1) ? B1C1table(secLineIndex, 0) : B2C2table(secLineIndex, 0);
+                    tempBC(1) = C_frozen;
                     prevBC = tempBC;
+                    solveFlag[secLineIndex] = solveFlag_start;
                     BC_Matrix.row(secLineIndex) = prevBC;
-
                 }
 
                 i = secEndIndex;
@@ -475,19 +588,23 @@ void GcodeGeneration::_motionPlanning3(
             else if (i == sectionTable(sectionNumber, 0) && i != 0 && sectionTable(sectionNumber, 1) == (lines - 1)) {
 
                 int secStartIndex = sectionTable(sectionNumber, 0);
+                // solution chosen at entry; C frozen at entry C value
+                int solveFlag_end;
+                if (_chooseB1C1(B1C1table.row(secStartIndex), B2C2table.row(secStartIndex), prevBC)) {
+                    prevBC << B1C1table.row(secStartIndex);
+                    solveFlag_end = 1;
+                }
+                else {
+                    prevBC << B2C2table.row(secStartIndex);
+                    solveFlag_end = 2;
+                }
+                double C_frozen = prevBC(1);
 
                 for (int secLineIndex = i; secLineIndex < lines; secLineIndex++) {
-
-                    if (_chooseB1C1(B1C1table.row(secStartIndex), B2C2table.row(secStartIndex), prevBC)) {
-                        tempBC << B1C1table.row(secStartIndex);
-                        solveFlag[secLineIndex] = 1;
-                    }
-                    else {
-                        tempBC << B2C2table.row(secStartIndex);
-                        solveFlag[secLineIndex] = 2;
-                    }
-
+                    tempBC(0) = (solveFlag_end == 1) ? B1C1table(secLineIndex, 0) : B2C2table(secLineIndex, 0);
+                    tempBC(1) = C_frozen;
                     prevBC = tempBC;
+                    solveFlag[secLineIndex] = solveFlag_end;
                     BC_Matrix.row(secLineIndex) = prevBC;
                 }
 
@@ -496,76 +613,27 @@ void GcodeGeneration::_motionPlanning3(
             // path passes through the sigularity region
             else if (i == sectionTable(sectionNumber, 0) && i != 0 && sectionTable(sectionNumber, 1) != (lines - 1)) {
 
-                // give the message to anchor point (start point)
+                // solution chosen at entry point; C frozen at entry C value; B stays exact
                 int secStartIndex = sectionTable(sectionNumber, 0);
+                int solveFlag_passThrough;
                 if (_chooseB1C1(B1C1table.row(secStartIndex), B2C2table.row(secStartIndex), prevBC)) {
                     prevBC << B1C1table.row(secStartIndex);
-                    solveFlag[secStartIndex] = 1;
-                }
-                else {
-                    prevBC << B2C2table.row(secStartIndex);
-                    solveFlag[secStartIndex] = 2;
-                }
-
-                // record the deg_BC of secStart point
-                Eigen::RowVector2d startPntBC = prevBC;
-
-                // decide the solve of End point
-                int secEndIndex = sectionTable(sectionNumber, 1);
-                int pointNum = secEndIndex - secStartIndex;
-
-                double rad_end_B1 = DEGREE_TO_ROTATE(B1C1table(secEndIndex, 0));	double rad_end_C1 = DEGREE_TO_ROTATE(B1C1table(secEndIndex, 1));
-                double rad_end_B2 = DEGREE_TO_ROTATE(B2C2table(secEndIndex, 0));	double rad_end_C2 = DEGREE_TO_ROTATE(B2C2table(secEndIndex, 1));
-                double rad_start_B = DEGREE_TO_ROTATE(startPntBC(0));				double rad_start_C = DEGREE_TO_ROTATE(startPntBC(1));
-
-                Eigen::Vector2d v_start_C = { cos(rad_start_C),sin(rad_start_C) };
-                Eigen::Vector2d v_end_C1 = { cos(rad_end_C1),sin(rad_end_C1) };
-                Eigen::Vector2d v_end_C2 = { cos(rad_end_C2),sin(rad_end_C2) };
-                //compute the actural angle of 2 vectors
-                double rad_end_C1_start_C = _safe_acos(v_end_C1.dot(v_start_C));		double rad_end_B1_start_B = rad_end_B1 - rad_start_B;
-                double rad_end_C2_start_C = _safe_acos(v_end_C2.dot(v_start_C));		double rad_end_B2_start_B = rad_end_B2 - rad_start_B;
-                //get rad_C/B_start_end
-                double rad_C_start_end = 0.0;
-                double rad_B_start_end = 0.0;
-                Eigen::Vector2d v_end_C = { 0.0,0.0 };
-
-                int solveFlag_passThrough = 0; // 1 -> solve 1 // 2 -> solve 2
-
-                if ((rad_end_C1_start_C) <= (rad_end_C2_start_C)) {
-                    rad_C_start_end = rad_end_C1_start_C;
-                    rad_B_start_end = rad_end_B1_start_B;
-                    v_end_C = v_end_C1;
                     solveFlag_passThrough = 1;
                 }
                 else {
-                    rad_C_start_end = rad_end_C2_start_C;
-                    rad_B_start_end = rad_end_B2_start_B;
-                    v_end_C = v_end_C2;
+                    prevBC << B2C2table.row(secStartIndex);
                     solveFlag_passThrough = 2;
                 }
+                double C_frozen = prevBC(1);
 
-                //decide the rotation direction of C axis
-                double sign = _toLeft({ 0.0,0.0 }, v_start_C, v_end_C);
+                int secEndIndex = sectionTable(sectionNumber, 1);
 
-                //get tha delta Angel of deg_B/C
-                double C_delta_Angle = ROTATE_TO_DEGREE(rad_C_start_end) / pointNum;
-                double B_delta_Angle = ROTATE_TO_DEGREE(rad_B_start_end) / pointNum;
-
-                unsigned int times = 0;
                 for (int secLineIndex = secStartIndex; secLineIndex < secEndIndex; secLineIndex++) {
-
-                    tempBC(0) = startPntBC(0) + times * B_delta_Angle;
-                    tempBC(1) = startPntBC(1) + sign * times * C_delta_Angle;
-
+                    tempBC(0) = (solveFlag_passThrough == 1) ? B1C1table(secLineIndex, 0) : B2C2table(secLineIndex, 0);
+                    tempBC(1) = C_frozen;
                     prevBC = tempBC;
-
-                    if (prevBC(1) > 180.0) prevBC(1) -= 360.0;
-                    if (prevBC(1) < -180.0) prevBC(1) += 360.0;
-
                     solveFlag[secLineIndex] = solveFlag_passThrough;
                     BC_Matrix.row(secLineIndex) = prevBC;
-
-                    times++;
                 }
 
                 i = secEndIndex;

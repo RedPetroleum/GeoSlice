@@ -189,6 +189,7 @@ GLKObject* GLKObList::GetNext( GLKPOSITION& rPosition )
 
 GLKObject* GLKObList::GetAt( GLKPOSITION rPosition )
 {
+	if (rPosition==nullptr) return nullptr;
 	return rPosition->data;
 }
 	

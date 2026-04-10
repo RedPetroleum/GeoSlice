@@ -3279,7 +3279,7 @@ void MainWindow::runDHWcalculation() {
 
 void MainWindow::runSingularityOpt() {
 
-    GcodeGene->singularityOpt();
+    GcodeGene->singularityOpt_direct();
     GcodeGene->testXYZBCE(true);
     //ui->pushButton_output2Robot->setEnabled(true);
     pGLK->refresh(true);

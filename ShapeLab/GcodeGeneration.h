@@ -31,6 +31,7 @@ public:
 		bool varyWidth_switch, bool outputDHW);
 	void calDHW();
 	void singularityOpt();
+	void singularityOpt_direct();
 	void cal_XYZBCE_test();
 	void detectCollision_2();
 	void graph_Search_Shortest_Path();
