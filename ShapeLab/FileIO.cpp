@@ -1,5 +1,6 @@
 #pragma once
 #include <fstream>
+#include <direct.h>
 
 #include "io.h"
 #include "FileIO.h"
@@ -323,9 +324,13 @@ void FileIO::output_TetMesh(QMeshPatch* tetMesh, std::string path) {
 
 void FileIO::output_toolpath(PolygenMesh* toolPath) {
 
+	std::cout << "[DEBUG] output_toolpath() entered." << std::endl;
+
 	std::string TOOLPATH_waypoint_dir = "../DataSet/TOOL_PATH/";
+	_mkdir("../DataSet/TOOL_PATH");
 	this->_remove_allFile_in_Dir(TOOLPATH_waypoint_dir);
 	std::string CURVED_layer_dir = "../DataSet/CURVED_LAYER/";
+	_mkdir("../DataSet/CURVED_LAYER");
 	this->_remove_allFile_in_Dir(CURVED_layer_dir);
 
 	std::vector<QMeshPatch*> toolpath_list;
@@ -344,6 +349,8 @@ void FileIO::output_toolpath(PolygenMesh* toolPath) {
 		if (each_toolpath->compatible_layer_Index < min_CompatibleLayer_ind)
 			min_CompatibleLayer_ind = each_toolpath->compatible_layer_Index;
 	}
+	std::cout << "[DEBUG] compatible_layer_Index range: ["
+	          << min_CompatibleLayer_ind << ", " << max_CompatibleLayer_ind << "]" << std::endl;
 
 	for (int i = min_CompatibleLayer_ind; i <= max_CompatibleLayer_ind; i++) {
 

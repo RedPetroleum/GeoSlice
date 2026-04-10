@@ -351,7 +351,7 @@ void toolpathGeneration::linkEachIsoNode(QMeshPatch* singlePath, double startIso
 	/*DEGUG*/
 	//for (GLKPOSITION Pos = singlePath->GetNodeList().GetHeadPosition(); Pos;) {
 	//	QMeshNode* thisNode = (QMeshNode*)singlePath->GetNodeList().GetNext(Pos);
-	//	std::cout << "thisNode->connectTPathProcessed = " << thisNode->connectTPathProcessed 
+	//	std::cout << "thisNode->connectTPathProcessed = " << thisNode->connectTPathProcessed
 	//		<< " thisNode->isoValue = " << thisNode->isoValue << std::endl;
 	//}
 	/*END*/
@@ -397,20 +397,20 @@ void toolpathGeneration::linkEachIsoNode(QMeshPatch* singlePath, double startIso
 		// Start linking one ring with same iso-Value
 		QMeshNode* unlinked_eNode = link_OneRing_isoNode(singlePath, sNode, eNode);
 		if (unlinked_eNode == nullptr) return;
-		
-		if (detectAll_isoNode_Processed(singlePath)) return;
-		
+
+		// findNextNearestPoint scans all nodes and returns nullptr when none remain —
+		// equivalent to detectAll_isoNode_Processed but avoids a redundant second full scan.
 		QMeshNode* link_sNode = unlinked_eNode;
 		QMeshNode* link_eNode = findNextNearestPoint(link_sNode, singlePath);
-		if (link_eNode == nullptr) std::cout << "Error: Cannot find link_eNode" << std::endl;
+		if (link_eNode == nullptr) return; // all nodes processed
+
 		QMeshEdge* link_Edge = buildNewEdgetoQMeshPatch(singlePath, link_sNode, link_eNode);
 		link_Edge->isConnectEdge = true;
 
 		sNode = link_eNode;
 		eNode = findNextBoundaryToolPath(sNode, singlePath);
-		if (eNode == nullptr) std::cout << "Error: Cannot find next toolpath Node" << std::endl;
 
-	} while (detectAll_isoNode_Processed(singlePath) == false);
+	} while (!detectAll_isoNode_Processed(singlePath));
 }
 
 QMeshNode* toolpathGeneration::findNextBoundaryToolPath(QMeshNode* sNode, QMeshPatch* singlePath) {
@@ -464,9 +464,9 @@ QMeshNode* toolpathGeneration::findNextBoundaryToolPath(QMeshNode* sNode, QMeshP
 		if (nextNodeDetected == true) break;
 	}
 
-	if (nextNodeDetected) { 
+	if (nextNodeDetected) {
 		eNode->connectTPathProcessed = true;
-		return eNode; 
+		return eNode;
 	}else {
 		//std::cout<<"Error, the next node is not found!"<<std::endl;
 		return nullptr;
@@ -495,30 +495,25 @@ QMeshEdge* toolpathGeneration::buildNewEdgetoQMeshPatch(QMeshPatch* patch, QMesh
 
 QMeshNode* toolpathGeneration::findNextNearestPoint(QMeshNode* sNode, QMeshPatch* singlePath){
 
-	GLKGeometry geo;
 	double pp[3]; sNode->GetCoord3D(pp[0], pp[1], pp[2]);
 	double p1[3];
-	double dist = 1000.0;
+	double dist2 = 1e20;
 	QMeshNode* nextNode = nullptr;
 
 	for (GLKPOSITION Pos = singlePath->GetNodeList().GetHeadPosition(); Pos;) {
 		QMeshNode* Node = (QMeshNode*)singlePath->GetNodeList().GetNext(Pos);
 		if (Node->connectTPathProcessed == true) continue;
 		Node->GetCoord3D(p1[0],p1[1],p1[2]);
-		double distancePP = geo.Distance_to_Point(pp, p1);
-		if (distancePP < dist) {
+		double dx = pp[0]-p1[0], dy = pp[1]-p1[1], dz = pp[2]-p1[2];
+		double d2 = dx*dx + dy*dy + dz*dz;
+		if (d2 < dist2) {
 			nextNode = Node;
-			dist = distancePP;
+			dist2 = d2;
 		}
 	}
-	if (nextNode == nullptr) { 
-		std::cout << "There is no isoNode need to link between different isoValue!" <<std::endl;
-		return nullptr;
-	}
-	else {
-		nextNode->connectTPathProcessed = true;
-		return nextNode;
-	}
+	if (nextNode == nullptr) return nullptr; // all nodes linked, normal exit
+	nextNode->connectTPathProcessed = true;
+	return nextNode;
 }
 
 bool toolpathGeneration::detectAll_isoNode_Processed(QMeshPatch* singlePath) {
@@ -873,9 +868,12 @@ void toolpathGeneration::generate_all_hybrid_toolPath() {
 	if (false) this->_importStressField4toolpathGeneration();
 
 
+	int completedLayers = 0;
+	std::cout << "Generating toolpaths for " << layerNum << " layers..." << std::endl;
+
 #pragma omp parallel
 	{
-#pragma omp for  
+#pragma omp for
 		for (int i = 0; i < sliceVector.size(); i++) {
 
 			/* ---- Generate boundary heat field ---- */
@@ -902,6 +900,13 @@ void toolpathGeneration::generate_all_hybrid_toolPath() {
 			}
 
 			toolpathVector[layer->GetIndexNo()] = singlePath;
+
+#pragma omp critical
+			{
+				completedLayers++;
+				if (completedLayers % 10 == 0 || completedLayers == layerNum)
+					std::cout << "  Layer " << completedLayers << " / " << layerNum << " done." << std::endl;
+			}
 		}
 	}
 
@@ -1174,23 +1179,18 @@ void toolpathGeneration::linkEachIsoNode_zigzag(QMeshPatch* singlePath, QMeshNod
 		QMeshNode* unlinked_eNode = link_OneLine_isoNode(singlePath, sNode, eNode);
 		if (unlinked_eNode == nullptr) return;
 
-		if (detectAll_isoNode_Processed(singlePath)) return;
-
 		QMeshNode* link_sNode = unlinked_eNode;
 		QMeshNode* link_eNode = findNextNearest_sidePoint(link_sNode, singlePath);
-		if (link_eNode == nullptr) {
-			std::cout << "Error: Cannot find link_eNode: Layer: "<< singlePath->GetIndexNo() << std::endl;
-			return;
-		}
+		if (link_eNode == nullptr) return; // all nodes processed
+
 		QMeshEdge* link_Edge = buildNewEdgetoQMeshPatch(singlePath, link_sNode, link_eNode);
 
 		link_Edge->isConnectEdge = true;
 
 		sNode = link_eNode;
 		eNode = findNextZigzagToolPath(sNode, singlePath);
-		if (eNode == nullptr) std::cout << "Error: Cannot find next toolpath Node." << std::endl;
 
-	} while (detectAll_isoNode_Processed(singlePath) == false);
+	} while (!detectAll_isoNode_Processed(singlePath));
 }
 
 QMeshNode* toolpathGeneration::findNextZigzagToolPath(QMeshNode* sNode, QMeshPatch* singlePath) {
@@ -1275,10 +1275,9 @@ QMeshNode* toolpathGeneration::link_OneLine_isoNode(QMeshPatch* singlePath, QMes
 
 QMeshNode* toolpathGeneration::findNextNearest_sidePoint(QMeshNode* sNode, QMeshPatch* singlePath) {
 
-	GLKGeometry geo;
 	double pp[3]; sNode->GetCoord3D(pp[0], pp[1], pp[2]);
 	double p1[3];
-	double dist = 1000.0;
+	double dist2 = 1e20;
 	QMeshNode* nextNode = nullptr;
 
 	for (GLKPOSITION Pos = singlePath->GetNodeList().GetHeadPosition(); Pos;) {
@@ -1286,20 +1285,16 @@ QMeshNode* toolpathGeneration::findNextNearest_sidePoint(QMeshNode* sNode, QMesh
 		if (Node->connectTPathProcessed) continue;
 		if (!Node->isZigzag_sideNode) continue;
 		Node->GetCoord3D(p1[0], p1[1], p1[2]);
-		double distancePP = geo.Distance_to_Point(pp, p1);
-		if (distancePP < dist) {
+		double dx = pp[0]-p1[0], dy = pp[1]-p1[1], dz = pp[2]-p1[2];
+		double d2 = dx*dx + dy*dy + dz*dz;
+		if (d2 < dist2) {
 			nextNode = Node;
-			dist = distancePP;
+			dist2 = d2;
 		}
 	}
-	if (nextNode == nullptr) {
-		std::cout << "There is no side isoNode to link!" << std::endl;
-		return nullptr;
-	}
-	else {
-		nextNode->connectTPathProcessed = true;
-		return nextNode;
-	}
+	if (nextNode == nullptr) return nullptr; // all nodes linked, normal exit
+	nextNode->connectTPathProcessed = true;
+	return nextNode;
 }
 
 //Smooth for the layers which is used to generate toolpath

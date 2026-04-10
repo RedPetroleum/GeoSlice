@@ -1923,7 +1923,7 @@ void MainWindow::_vectorField_2_scalarField_withHardConstrain(QMeshPatch* tetMes
 
     Eigen::SparseMatrix<double> ATA(nodeNum, nodeNum);
     ATA = Parameter.transpose() * Parameter;
-    Eigen::SparseLU <Eigen::SparseMatrix<double>> Solver;
+    Eigen::PardisoLU <Eigen::SparseMatrix<double>> Solver;
 
     Solver.compute(ATA);
 
@@ -2019,7 +2019,7 @@ void MainWindow::_compVectorField_smooth_withHardConstrain(QMeshPatch* tetMesh) 
 
     Eigen::SparseMatrix<double> ATA(eleNum, eleNum);
     ATA = Parameter.transpose() * Parameter;
-    Eigen::SparseLU <Eigen::SparseMatrix<double>> Solver;
+    Eigen::PardisoLU <Eigen::SparseMatrix<double>> Solver;
     Solver.compute(ATA);
 
     std::vector<Eigen::VectorXd> ATb(3);
@@ -3058,10 +3058,18 @@ void MainWindow::toolPath_hybrid_Generation() {
 
 void MainWindow::output_Toolpath_set() {
 
+    std::cout << "[DEBUG] output_Toolpath_set() called." << std::endl;
+
     PolygenMesh* toolpathSet = this->_detectPolygenMesh(TOOL_PATH);
     if (toolpathSet == NULL) {
+        std::cout << "[DEBUG] ERROR: toolpathSet is NULL - no TOOL_PATH mesh found in polygenMeshList." << std::endl;
         std::cerr << "There is no toolpath set, please check." << std::endl; return;
     }
+    std::cout << "[DEBUG] toolpathSet found, patch count = "
+              << toolpathSet->GetMeshList().GetCount() << std::endl;
+    std::cout << "[DEBUG] checkBox_outputCompatiblewaypoint = "
+              << ui->checkBox_outputCompatiblewaypoint->isChecked() << std::endl;
+
     FileIO* IO_operator = new FileIO();
     if (ui->checkBox_outputCompatiblewaypoint->isChecked()) {
         IO_operator->output_toolpath_compatible(toolpathSet);

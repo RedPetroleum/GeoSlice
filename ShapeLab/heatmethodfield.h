@@ -8,7 +8,7 @@
 #include "QMeshEdge.h"
 #include "QMeshFace.h"
 #include "../GLKLib/GLKObList.h"
-#include <../ThirdPartyDependence/eigen3/Eigen/Sparse> 
+#include <../ThirdPartyDependence/eigen3/Eigen/Sparse>
 
 class heatMethodField
 {

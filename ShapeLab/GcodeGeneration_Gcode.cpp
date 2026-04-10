@@ -281,11 +281,7 @@ void GcodeGeneration::writeGcode(std::string GcodeDir) {
                         double insY = Node->insertNodesInfo[i](1);
                         double insB = Node->insertNodesInfo[i](3);
                         double insC = Node->insertNodesInfo[i](4);
-                        //if (!TCP) {
-                            std::swap(insX, insY);
-                            insB = -insB;
-                            insC = -insC;
-                        //}
+                        // (transformation removed: was unconditionally applied, causing mismatch with test_XYZBCE for TCP mode)
                         std::fprintf(fp, "G1 X%.2f Y%.2f Z%.2f " AX_B "%.2f " AX_C "%.2f " AX_E "%.2f F%d\n",
                             insX, insY, Node->insertNodesInfo[i](2),
                             insB, insC, Node->insertNodesInfo[i](5), F);

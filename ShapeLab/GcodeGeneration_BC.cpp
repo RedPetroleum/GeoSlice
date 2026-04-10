@@ -739,6 +739,7 @@ void GcodeGeneration::_optimizationC(QMeshPatch* patch) {
 
             if (Node->GetIndexNo() == 0) continue;
             GLKPOSITION prevPos = patch->GetNodeList().Find(Node)->prev;
+            if (prevPos == nullptr) continue;
             QMeshNode* prevNode = (QMeshNode*)patch->GetNodeList().GetAt(prevPos);
             double preC = prevNode->m_XYZBCE(4);
 

@@ -849,12 +849,10 @@ bool heatMethodField::scalarFieldCompute_zigzag() {
     Eigen::SparseMatrix<double> ATA(surfaceMesh->GetNodeNumber(), surfaceMesh->GetNodeNumber());
     ATA = Parameter.transpose() * Parameter;
     Eigen::SparseLU <Eigen::SparseMatrix<double>> Solver;
-
-    //Solver.compute(ATA);
     Solver.analyzePattern(ATA);
     Solver.factorize(ATA);
     if (Solver.info() != Eigen::Success) {
-        cout << "this layer has error computing scalar field !" << endl; 
+        cout << "this layer has error computing scalar field !" << endl;
         return false;
     }
 

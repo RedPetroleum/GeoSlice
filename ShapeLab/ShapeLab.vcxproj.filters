@@ -80,6 +80,9 @@
     <ClCompile Include="GcodeGeneration_IO.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ToolTransformations.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="Graph.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>

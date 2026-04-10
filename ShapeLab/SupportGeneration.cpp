@@ -156,7 +156,7 @@ bool SupportGeneration::_find_targetNode(
 		if (ROTATE_TO_DEGREE(radian_angle) < descend_angle) step_Direction = descend_dir; // in the range of support angle, directly downward
 		else {
 			// only rotate a support angle
-			Eigen::AngleAxisd V1(DEGREE_TO_ROTATE(descend_angle), rotateAxis);//rotateAxis£¬rotate tau(deg)
+			Eigen::AngleAxisd V1(DEGREE_TO_ROTATE(descend_angle), rotateAxis);//rotateAxisï¿½ï¿½rotate tau(deg)
 			step_Direction = V1 * step_Direction;
 		}
 	}
@@ -2026,7 +2026,7 @@ void SupportGeneration::_compute_descend_Dir_hostNode(QMeshNode* hostNode, bool 
 		hostNode->descend_From_TreeNode_Dir = descend_dir; // in the range of support angle, directly downward
 	else {
 		// only rotate a support angle
-		Eigen::AngleAxisd V(DEGREE_TO_ROTATE(tau), rotateAxis);//rotateAxis£¬rotate tau(deg)
+		Eigen::AngleAxisd V(DEGREE_TO_ROTATE(tau), rotateAxis);//rotateAxisï¿½ï¿½rotate tau(deg)
 		hostNode->descend_From_TreeNode_Dir = V * face_normal;
 	}
 	//hostNode->descend_From_TreeNode_Dir = face_normal;//tianyu test going
@@ -2177,7 +2177,7 @@ bool SupportGeneration::_compute_descend_Dir_followNode(QMeshNode* followNode, Q
 	}
 	else {
 		// only rotate a support angle
-		Eigen::AngleAxisd V(DEGREE_TO_ROTATE(tau), rotateAxis);	//rotateAxis£¬rotate tau(deg)
+		Eigen::AngleAxisd V(DEGREE_TO_ROTATE(tau), rotateAxis);	//rotateAxisï¿½ï¿½rotate tau(deg)
 		followNode->descend_From_TreeNode_Dir = V * face_normal;
 		is_merged = false;
 	}

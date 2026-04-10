@@ -81,6 +81,7 @@ public:
 
 class TableTiltTurnTransformStrategy final : public ToolTransformStrategy { //Open5x
 public:
+   
     // Converts planned print coordinates into machine coordinates using
     // Table-Table Kinematics (Z-Rotation C, Y-Tilt B). Matrix M.
     Eigen::Vector3d ToMachinePosition(const Eigen::Vector3d& printPos,
@@ -117,30 +118,34 @@ public:
         const double sinC = std::sin(radC);
         const double cosC = std::cos(radC);
 
-        // Rückgängig machen der vertauschten Achsen
+        // Rï¿½ckgï¿½ngig machen der vertauschten Achsen
         const double X_neu = machinePos.y(); 
         const double Y_neu = machinePos.x(); 
         const double Z_neu = machinePos.z();
 
         result.x() = X_neu * cosB * cosC + Y_neu * sinC - Z_neu * sinB * cosC;
         result.y() = -X_neu * cosB * sinC + Y_neu * cosC + Z_neu * sinB * sinC;
-        result.z() = -X_neu * sinB + Z_neu * cosB;
+        result.z() = X_neu * sinB + Z_neu * cosB;
 
         return result;
     }
 
     double CalculateCAngle(double nx, double ny) const override {
-        return std::atan2(nx, ny);
+        // Correct for Ry(B)*Rz(C) tilt table: n = (-sinB*cosC, sinB*sinC, cosB)
+        // => C = atan2(-ny, nx)  [atan2(nx,ny) would give C+90deg]
+        return std::atan2(-ny, nx);
     }
 
     Eigen::Vector3d ToPrintNormal(double radB, double radC) const override {
+        // Correct for Ry(B)*Rz(C) tilt table: M^T * [0,0,1] = (-sinB*cosC, sinB*sinC, cosB)
         return Eigen::Vector3d(
-            -std::sin(radB) * std::sin(radC),
             -std::sin(radB) * std::cos(radC),
-            std::cos(radB)
+             std::sin(radB) * std::sin(radC),
+             std::cos(radB)
         );
     }
 };
+
 
 } // namespace
 
