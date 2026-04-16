@@ -32,13 +32,18 @@ int GcodeGeneration::read_layer_toolpath_cnc_files() {
 	std::string PosNorFileDir = m_Dir + "/waypoint";
 	std::string LayerFileDir = m_Dir + "/layer";
 
+	std::cout << "Reading file list from: " << PosNorFileDir << std::endl;
 	this->_getFileName_Set(PosNorFileDir, wayPointFileCell);
+    std::cout << "Reading file list from: " << LayerFileDir << std::endl;
     this->_getFileName_Set(LayerFileDir, sliceSetFileCell);
 
-    if (wayPointFileCell.size() != sliceSetFileCell.size()) { 
-        std::cout << "The file number of slics and toolpath is not the same, please check." << std::endl;
-        return 0; 
+    if (wayPointFileCell.size() != sliceSetFileCell.size()) {
+        std::cout << "The file number of slices (" << sliceSetFileCell.size()
+                  << ") and toolpaths (" << wayPointFileCell.size()
+                  << ") is not the same, please check." << std::endl;
+        return 0;
     }
+    std::cout << "Found " << wayPointFileCell.size() << " layers. Loading..." << std::endl;
 
     this->_readWayPointData(PosNorFileDir);
     this->_readSliceData(LayerFileDir);
@@ -123,9 +128,13 @@ void GcodeGeneration::_modifyCoord(QMeshPatch* patchFile,bool Yup2Zup) {
 
 void GcodeGeneration::_readWayPointData(std::string packName) {
 
+    std::cout << "--- Loading waypoints (toolpaths)..." << std::endl;
+    long time = clock();
+
     //read waypoint files and build mesh_patches
     char filename[1024];
-    for (int i = 0; i < wayPointFileCell.size(); i++) {
+    int total = (int)wayPointFileCell.size();
+    for (int i = 0; i < total; i++) {
 
         sprintf(filename, "%s%s%s", packName.c_str(), "/", wayPointFileCell[i].data());
 
@@ -140,8 +149,10 @@ void GcodeGeneration::_readWayPointData(std::string packName) {
         else	waypoint->is_SupportLayer = true;
 
         waypoint->inputPosNorFile(filename, m_Yup2Zup);
-        //if (m_modelName == "yoga_icra") this->cleanInputNormal(waypoint);
         this->_modifyCoord(waypoint, m_Yup2Zup); // give last normal and position info
+
+        if ((i + 1) % 100 == 0 || (i + 1) == total)
+            std::cout << "  Waypoints: " << (i + 1) << " / " << total << " loaded." << std::endl;
     }
 
     // MoveModel(Xmove, Ymove, Zmove);
@@ -169,14 +180,18 @@ void GcodeGeneration::_readWayPointData(std::string packName) {
 
         }
     }
-    std::cout << "------------------------------------------- WayPoints Load Finish!" << std::endl;
+    std::printf("--- Waypoints loaded in %ld ms.\n", clock() - time);
 }
 
 void GcodeGeneration::_readSliceData(std::string packName) {
 
+    std::cout << "--- Loading slice layers (OBJ)..." << std::endl;
+    long time = clock();
+
     //read slice files and build mesh_patches
     char filename[1024];
-    for (int i = 0; i < sliceSetFileCell.size(); i++) {
+    int total = (int)sliceSetFileCell.size();
+    for (int i = 0; i < total; i++) {
 
         sprintf(filename, "%s%s%s", packName.c_str(), "/", sliceSetFileCell[i].data());
 
@@ -191,8 +206,10 @@ void GcodeGeneration::_readSliceData(std::string packName) {
         else	layers->is_SupportLayer = true;
 
         layers->inputOBJFile(filename);
-
         this->_modifyCoord(layers, m_Yup2Zup);
+
+        if ((i + 1) % 100 == 0 || (i + 1) == total)
+            std::cout << "  Slices: " << (i + 1) << " / " << total << " loaded." << std::endl;
     }
 
     // MoveModel(Xmove, Ymove, Zmove);
@@ -209,7 +226,7 @@ void GcodeGeneration::_readSliceData(std::string packName) {
             Node->SetCoord3D(xx, yy, zz);
         }
     }
-    std::cout << "------------------------------------------- Slices Load Finish!" << std::endl;
+    std::printf("--- Slices loaded in %ld ms.\n", clock() - time);
 }
 
 void GcodeGeneration::_readCncData(int input_Step) {

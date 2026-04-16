@@ -1,6 +1,8 @@
 #include "toolpathgeneration.h"
 #include <iostream>
 #include <fstream>
+#include <cmath>
+#include <omp.h>
 #include "GLKGeometry.h"
 #include "heatmethodfield.h"
 #include "io.h"
@@ -121,9 +123,11 @@ void toolpathGeneration::generate_all_toolPath() {
 		tempInd++;
 	}
 
+	// Limit threads to avoid RAM overflow from concurrent Cholesky factorizations
+	omp_set_num_threads(2);
 #pragma omp parallel
 	{
-#pragma omp for  
+#pragma omp for
 		for (int i = 0; i < sliceVector.size(); i++) {
 
 			/* ---- Generate boundary heat field ---- */
@@ -277,18 +281,24 @@ int toolpathGeneration::autoComputeTPathNum(QMeshPatch* surfaceMesh, bool bounda
 	if (fabs(node_coord3D_sum) < 1e-5) return 0;
 
 
+	// Compute min distance between adjacent iso-curves via subsampling (avoids O(N^2))
+	const int maxSample = 80; // compare at most 80×80 = 6400 pairs per curve pair
 	Eigen::VectorXd distance(iter - 1);
 	for (int i = 0; i < iter - 1; i++) {
+		int n0 = (int)isoPointNum(i);
+		int n1 = (int)isoPointNum(i + 1);
+		if (n0 == 0 || n1 == 0) { distance(i) = 0.0; continue; }
+		int step0 = (int)std::ceil((double)n0 / maxSample);
+		int step1 = (int)std::ceil((double)n1 / maxSample);
 		distance(i) = 1000000.0;
-
-		for (int j = 0; j < isoPointNum(i); j++) {
-			for (int k = 0; k < isoPointNum(i + 1); k++) {
+		for (int j = 0; j < n0; j += step0) {
+			for (int k = 0; k < n1; k += step1) {
 				double dis = (isoPoint[i].row(j) - isoPoint[i + 1].row(k)).norm();
 				if (dis < distance(i)) distance(i) = dis;
 			}
 		}
 	}
-	//std::cout << distance << std::endl; // return the number of cut
+	//std::cout << distance << std::endl;
 	return floor(distance.sum() / distanceTPath); 
 }
 

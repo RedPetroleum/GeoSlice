@@ -150,7 +150,7 @@ public:
     QVBoxLayout *verticalLayout_2;
     QHBoxLayout *horizontalLayout_3;
     QLabel *label_13;
-    QSpinBox *spinBox_isoLayerNumber;
+    QDoubleSpinBox *doubleSpinBox_layerThickness;
     QPushButton *pushButton_outputIsoLayerSet;
     QPushButton *pushButton_isoLayerGeneration;
     QPushButton *pushButton_adaptiveHeightSlicing;
@@ -902,14 +902,17 @@ public:
 
         horizontalLayout_3->addWidget(label_13);
 
-        spinBox_isoLayerNumber = new QSpinBox(tab_2);
-        spinBox_isoLayerNumber->setObjectName(QString::fromUtf8("spinBox_isoLayerNumber"));
-        spinBox_isoLayerNumber->setMinimumSize(QSize(0, 0));
-        spinBox_isoLayerNumber->setFont(font2);
-        spinBox_isoLayerNumber->setMaximum(999);
-        spinBox_isoLayerNumber->setValue(100);
+        doubleSpinBox_layerThickness = new QDoubleSpinBox(tab_2);
+        doubleSpinBox_layerThickness->setObjectName(QString::fromUtf8("doubleSpinBox_layerThickness"));
+        doubleSpinBox_layerThickness->setMinimumSize(QSize(0, 0));
+        doubleSpinBox_layerThickness->setFont(font2);
+        doubleSpinBox_layerThickness->setMinimum(0.010000000000000);
+        doubleSpinBox_layerThickness->setMaximum(10.000000000000000);
+        doubleSpinBox_layerThickness->setSingleStep(0.050000000000000);
+        doubleSpinBox_layerThickness->setDecimals(3);
+        doubleSpinBox_layerThickness->setValue(0.200000000000000);
 
-        horizontalLayout_3->addWidget(spinBox_isoLayerNumber);
+        horizontalLayout_3->addWidget(doubleSpinBox_layerThickness);
 
         pushButton_outputIsoLayerSet = new QPushButton(tab_2);
         pushButton_outputIsoLayerSet->setObjectName(QString::fromUtf8("pushButton_outputIsoLayerSet"));
@@ -1640,7 +1643,7 @@ public:
         pushButton_s3DeformFDM_hybrid_SL_SR_SQ_ASAP->setText(QCoreApplication::translate("MainWindow", "1.7 SF_SR_SQ", nullptr));
         pushButton_s3DeformFDM_inverseDeform->setText(QCoreApplication::translate("MainWindow", "2. Inverse Deformation", nullptr));
         tabWidget->setTabText(tabWidget->indexOf(tab), QCoreApplication::translate("MainWindow", "Deformation", nullptr));
-        label_13->setText(QCoreApplication::translate("MainWindow", "Slicing Layer Num", nullptr));
+        label_13->setText(QCoreApplication::translate("MainWindow", "Layer Thickness (mm)", nullptr));
         pushButton_outputIsoLayerSet->setText(QCoreApplication::translate("MainWindow", "Output", nullptr));
         pushButton_isoLayerGeneration->setText(QCoreApplication::translate("MainWindow", "3.0 Layer Generation (scalar)", nullptr));
         pushButton_adaptiveHeightSlicing->setText(QCoreApplication::translate("MainWindow", "3.1 Adaptive Height Slicing  ", nullptr));

@@ -862,12 +862,12 @@
               </font>
              </property>
              <property name="text">
-              <string>Slicing Layer Num</string>
+              <string>Layer Thickness (mm)</string>
              </property>
             </widget>
            </item>
            <item>
-            <widget class="QSpinBox" name="spinBox_isoLayerNumber">
+            <widget class="QDoubleSpinBox" name="doubleSpinBox_layerThickness">
              <property name="minimumSize">
               <size>
                <width>0</width>
@@ -880,11 +880,20 @@
                <bold>false</bold>
               </font>
              </property>
+             <property name="minimum">
+              <double>0.010000000000000</double>
+             </property>
              <property name="maximum">
-              <number>999</number>
+              <double>10.000000000000000</double>
+             </property>
+             <property name="singleStep">
+              <double>0.050000000000000</double>
+             </property>
+             <property name="decimals">
+              <number>3</number>
              </property>
              <property name="value">
-              <number>100</number>
+              <double>0.200000000000000</double>
              </property>
             </widget>
            </item>

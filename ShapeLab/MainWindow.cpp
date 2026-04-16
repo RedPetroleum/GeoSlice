@@ -12,6 +12,7 @@
 #include <QStyleFactory>
 #include <QComboBox>
 #include <fstream>
+#include <cmath>
 #include <Eigen/Eigen>
 #include <Eigen/PardisoSupport>
 #include <dirent.h>
@@ -836,34 +837,6 @@ void MainWindow::_updateFrameworkParameter() {
         std::cout << "This model is not found, using initial parameters!" << std::endl;
         this->_setParameter(1, 7, NONE, 0.0, 0.0, 0.0, 0.0, 3.0, 1.0, 4.0, 90.0, 0.0, 0.0); return;
     }
-
-    //read pre-defined layer number
-    int layerNum = 0;
-    if (modelName == "AnkleBaseV1")     layerNum = 43;
-    else if (modelName == "dome")       layerNum = 60;
-    else if (modelName == "domeL")       layerNum = 101;
-    else if (modelName == "tree3")      layerNum = 180;
-    else if (modelName == "armadillo")  layerNum = 200;
-    else if (modelName == "armadillo2") layerNum = 250;
-    else if (modelName == "armadillo4") layerNum = 250;
-    else if (modelName == "fertility")  layerNum = 150;
-    else if (modelName == "airbus_topopt")  layerNum = 100;
-    else if (modelName == "bunny")      layerNum = 150;
-    else if (modelName == "bunny_cut" || modelName == "bunny_cut1" || modelName == "bunny_cut2")   layerNum = 180;
-    else if (modelName == "bunny_cut6") layerNum = 181;
-    else if (modelName == "curved_Bar") layerNum = 180;
-    else if (modelName == "tube")       layerNum = 180;
-    else if (modelName == "bunny_cut3") layerNum = 186;
-    else if (modelName == "topopt_new3")layerNum = 99;
-    else if (modelName == "teapot")     layerNum = 150;
-    else if (modelName == "wing_mirror_step1")     layerNum = 70;
-    else if (modelName == "wing_mirror_step3")     layerNum = 12;
-    else if (modelName == "wing_mirror_step2")     layerNum = 22;
-    else if (modelName == "wing_mirror_step4")     layerNum = 10;
-    else if (modelName == "bridgeSmall_new")       layerNum = 180;
-    else layerNum = 100;
-
-    ui->spinBox_isoLayerNumber->setValue(layerNum);
 
     std::cout << "Finish inputing parameters for the given model." << std::endl;
 }
@@ -2109,8 +2082,14 @@ void MainWindow::curvedLayer_Generation() {
         isoLayerSet->ClearAll();
     }
 
+    double bb[6]; model->ComputeBoundingBox(bb);
+    int layerNum = (int)std::round((bb[3] - bb[2]) / ui->doubleSpinBox_layerThickness->value());
+    if (layerNum < 1) layerNum = 1;
+    std::cout << "Model height: " << (bb[3] - bb[2]) << " mm, layer thickness: "
+              << ui->doubleSpinBox_layerThickness->value() << " mm -> " << layerNum << " layers" << std::endl;
+
     IsoLayerGeneration* slicer = new IsoLayerGeneration(model);
-    slicer->generateIsoSurface(isoLayerSet, ui->spinBox_isoLayerNumber->value());
+    slicer->generateIsoSurface(isoLayerSet, layerNum);
     ui->spinBox_ShowLayerIndex->setMinimum((int)0);
     delete slicer;
     //for (int i = 0; i < 1; i++) slicer->smoothingIsoSurface(isoLayerSet);
@@ -2840,10 +2819,16 @@ void MainWindow::compatibleLayer_Generation() {
 
     //generate compatible layers
     PolygenMesh* compatible_isoLayerSet = this->_buildPolygenMesh(CURVED_LAYER, "compatible_isoLayers");
+    double bb_support[6]; model->ComputeBoundingBox(bb_support);
+    int layerNum_support = (int)std::round((bb_support[3] - bb_support[2]) / ui->doubleSpinBox_layerThickness->value());
+    if (layerNum_support < 1) layerNum_support = 1;
+    std::cout << "Model height: " << (bb_support[3] - bb_support[2]) << " mm, layer thickness: "
+              << ui->doubleSpinBox_layerThickness->value() << " mm -> " << layerNum_support << " layers" << std::endl;
+
     IsoLayerGeneration* slicer = new IsoLayerGeneration(model);
-    slicer->generateIsoSurface(compatible_isoLayerSet, ui->spinBox_isoLayerNumber->value());
+    slicer->generateIsoSurface(compatible_isoLayerSet, layerNum_support);
     slicer->generateIsoSurface_support(
-        compatible_isoLayerSet, patch_supportTet_hollowed, ui->spinBox_isoLayerNumber->value());
+        compatible_isoLayerSet, patch_supportTet_hollowed, layerNum_support);
     delete slicer;
     ui->spinBox_ShowLayerIndex->setMinimum((int)0);
     ui->radioButton_compatibleLayer->setEnabled(true);
@@ -2852,7 +2837,7 @@ void MainWindow::compatibleLayer_Generation() {
 
     //organize the compatible layers
     supportGene->organize_compatibleLayer_Index(compatible_isoLayerSet,
-        compatible_isoLayerSet->GetMeshList().GetCount() - ui->spinBox_isoLayerNumber->value());
+        compatible_isoLayerSet->GetMeshList().GetCount() - layerNum_support);
     supportGene->output_compatibleLayer_4_remesh(compatible_isoLayerSet);
     delete supportGene;
 
@@ -3124,15 +3109,23 @@ void MainWindow::readGcodeSourceData() {
         ui->doubleSpinBox_Xmove->value(), ui->doubleSpinBox_Ymove->value(), ui->doubleSpinBox_Zmove->value(),
         ui->doubleSpinBox_toolLength->value(), modelName);
     int layerNum = GcodeGene->read_layer_toolpath_cnc_files();
+    std::cout << "Files loaded. Setting up UI for " << layerNum << " layers..." << std::endl;
 
     ui->spinBox_ShowLayerIndex_2->setMaximum(layerNum - 1);
     ui->spinBox_StartLayerIndex->setMaximum(layerNum - 1);
     ui->spinBox_GcodeGeneFromIndex->setMaximum(layerNum - 1);
     ui->spinBox_GcodeGeneToIndex->setMaximum(layerNum - 1);
     ui->spinBox_GcodeGeneToIndex->setValue(layerNum - 1);
-    //ui->pushButton_output_userWaypoints->setEnabled(true);
 
+    // Hide slices and toolpaths by default — rendering 1000+ meshes at once hangs OpenGL
+    for (GLKPOSITION pos = polygenMeshList.GetHeadPosition(); pos != nullptr;) {
+        PolygenMesh* pm = (PolygenMesh*)polygenMeshList.GetNext(pos);
+        if (pm->meshType == CURVED_LAYER || pm->meshType == TOOL_PATH)
+            pm->bShow = false;
+    }
+    std::cout << "Updating tree..." << std::endl;
     updateTree();
+    std::cout << "Refreshing view..." << std::endl;
     pGLK->refresh(true);
     pGLK->Zoom_All_in_View();
     std::cout << "Finish inputing GcodeSource data.\n" << std::endl;
